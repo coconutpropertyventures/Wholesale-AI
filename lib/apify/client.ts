@@ -165,6 +165,15 @@ export async function searchRedfin(query: string): Promise<DealPrefill[]> {
   return rows.map(mapRedfinRow).filter((p) => p.address || p.listPrice);
 }
 
+/** Poll cadence + ceiling for one detail run inside a web request.
+ *  memo23 takes ~50s for a single property; the async lifecycle below
+ *  polls in-process up to ~110s (the run-sync transport's old budget)
+ *  before giving up. */
+const DETAIL_POLL_INTERVAL_MS = 5_000;
+const DETAIL_POLL_TIMEOUT_MS = 110_000;
+/** Apify run statuses that end a run without a dataset worth reading. */
+const DETAIL_TERMINAL_FAILURES = ["FAILED", "ABORTED", "TIMED-OUT"];
+
 /**
  * Full property record for one Redfin listing URL, via the DETAIL
  * Actor (memo23) — the workbench's "fullest record" source: beds /
@@ -175,18 +184,45 @@ export async function searchRedfin(query: string): Promise<DealPrefill[]> {
  * 2026-10-18). One run pulls one listing (~$0.009, tens of seconds);
  * callers cache the merged result so it is paid for once. Returns the
  * row whose URL matches, else the first row, else null.
+ *
+ * Transport: the ASYNC lifecycle (startActorRun → getActorRun poll →
+ * getDatasetItems) — the same path blast enrichment uses in
+ * production. The run-sync endpoint fails fast and empty for this
+ * Actor (diagnosed live, 2026-10-18: /api/deals/detail returned in
+ * ~1s with no record while async runs of the same Actor succeeded),
+ * so it is never used here. A run that ends FAILED / ABORTED /
+ * TIMED-OUT — or is still running at the poll ceiling — throws an
+ * Error carrying the run status, so callers can surface WHY.
  */
 export async function fetchRedfinDetailPrefill(
   url: string,
 ): Promise<DealPrefill | null> {
-  // One listing URL in, one row out — budget exactly 1.
-  const rows = await runActorSync(
-    redfinDetailActorId(),
-    {
-      startUrls: [url],
-    },
-    1,
-  );
+  const started = await startActorRun(redfinDetailActorId(), {
+    startUrls: [url],
+  });
+  const deadline = Date.now() + DETAIL_POLL_TIMEOUT_MS;
+  let runRef = started;
+  while (runRef.status !== "SUCCEEDED") {
+    if (DETAIL_TERMINAL_FAILURES.includes(runRef.status)) {
+      throw new Error(
+        `Redfin detail run ${started.runId} ended with status ${runRef.status}.`,
+      );
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `Redfin detail run ${started.runId} did not finish within ${
+          DETAIL_POLL_TIMEOUT_MS / 1000
+        }s (last status ${runRef.status}).`,
+      );
+    }
+    await new Promise((resolve) =>
+      setTimeout(resolve, DETAIL_POLL_INTERVAL_MS),
+    );
+    runRef = await getActorRun(started.runId);
+  }
+  const datasetId = runRef.datasetId ?? started.datasetId;
+  if (!datasetId) return null;
+  const rows = await getDatasetItems(datasetId);
   if (rows.length === 0) return null;
   const match =
     rows.find((r) => typeof r.url === "string" && r.url === url) ?? rows[0];

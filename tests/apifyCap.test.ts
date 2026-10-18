@@ -109,10 +109,39 @@ describe("call-site budgets", () => {
     expect(calledUrl(fetchMock).searchParams.get("maxItems")).toBe("500");
   });
 
-  it("Redfin detail pull budgets exactly the one URL requested", async () => {
-    const fetchMock = stubFetch([{ url: "https://www.redfin.com/x" }]);
+  it("Redfin detail pull uses the async lifecycle, one URL in the run input", async () => {
+    // The memo23 detail Actor is pulled via start → poll → dataset
+    // (run-sync fails fast for it in production). The start response
+    // already reads SUCCEEDED here, so no poll sleep is burned.
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      const payload = url.includes("/acts/")
+        ? { data: { id: "run-1", status: "SUCCEEDED", defaultDatasetId: "ds-1" } }
+        : url.includes("/actor-runs/")
+          ? { data: { id: "run-1", status: "SUCCEEDED", defaultDatasetId: "ds-1" } }
+          : [{ url: "https://www.redfin.com/x" }];
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(payload),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
     await fetchRedfinDetailPrefill("https://www.redfin.com/x");
-    expect(calledUrl(fetchMock).searchParams.get("maxItems")).toBe("1");
+    const startUrl = new URL(calls[0].url);
+    expect(startUrl.pathname).toContain(
+      "/acts/memo23~apify-redfin-cheerio/runs",
+    );
+    expect(startUrl.pathname).not.toContain("run-sync");
+    // memo23's schema wants startUrls as plain URL strings.
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      startUrls: ["https://www.redfin.com/x"],
+    });
+    // The finished run's dataset is what gets read.
+    expect(calls.some((c) => c.url.includes("/datasets/ds-1/items"))).toBe(
+      true,
+    );
   });
 
   it("Zillow single-listing lookup budgets exactly the batch requested", async () => {

@@ -22,6 +22,9 @@ const hoisted = vi.hoisted(() => ({
   cached: null as { prefill: DealPrefill; source: string } | null,
   cachePuts: [] as { key: string; prefill: DealPrefill; source: string }[],
   detailResult: null as DealPrefill | null,
+  lookupResult: null as DealPrefill | null,
+  detailThrows: false,
+  lookupThrows: false,
   detailCalls: 0,
   lookupCalls: 0,
 }));
@@ -41,11 +44,17 @@ vi.mock("@/lib/apify/client", () => ({
   apifyConfigured: () => true,
   fetchRedfinDetailPrefill: async () => {
     hoisted.detailCalls += 1;
+    if (hoisted.detailThrows) {
+      throw new Error("Redfin detail run run-1 ended with status FAILED.");
+    }
     return hoisted.detailResult;
   },
   lookupListing: async () => {
     hoisted.lookupCalls += 1;
-    return hoisted.detailResult;
+    if (hoisted.lookupThrows) {
+      throw new Error("Apify run failed (502): upstream boom");
+    }
+    return hoisted.lookupResult ?? hoisted.detailResult;
   },
 }));
 
@@ -81,6 +90,7 @@ async function callDetail() {
   return (await res.json()) as {
     ok: boolean;
     detailFetched: boolean;
+    detailError?: string;
     prefill: DealPrefill;
   };
 }
@@ -89,6 +99,9 @@ beforeEach(() => {
   hoisted.cached = null;
   hoisted.cachePuts = [];
   hoisted.detailResult = null;
+  hoisted.lookupResult = null;
+  hoisted.detailThrows = false;
+  hoisted.lookupThrows = false;
   hoisted.detailCalls = 0;
   hoisted.lookupCalls = 0;
 });
@@ -152,6 +165,62 @@ describe("POST /api/deals/detail photos completeness", () => {
     expect(hoisted.lookupCalls).toBe(0);
     expect(body.detailFetched).toBe(false);
     expect(body.prefill.photos).toEqual(DETAIL_PHOTOS);
+    expect(hoisted.cachePuts).toHaveLength(0);
+  });
+});
+
+describe("POST /api/deals/detail pull fallback + error surfacing", () => {
+  it("(b) memo23 pull throws → falls back to lookupListing; filled prefill, detailFetched, cached", async () => {
+    hoisted.cached = { prefill: staleRecord(), source: "apify" };
+    hoisted.detailThrows = true;
+    hoisted.lookupResult = staleRecord({ photos: DETAIL_PHOTOS });
+
+    const body = await callDetail();
+
+    expect(body.ok).toBe(true);
+    expect(hoisted.detailCalls).toBe(1);
+    expect(hoisted.lookupCalls).toBe(1);
+    expect(body.detailFetched).toBe(true);
+    expect(body.prefill.photos).toEqual(DETAIL_PHOTOS);
+    // The memo23 failure is surfaced even though the fallback saved
+    // the record — a dead primary pull path must stay visible.
+    expect(body.detailError).toContain("FAILED");
+    expect(hoisted.cachePuts).toHaveLength(1);
+    expect(hoisted.cachePuts[0].source).toBe("apify-detail");
+    expect(hoisted.cachePuts[0].prefill.photos).toEqual(DETAIL_PHOTOS);
+  });
+
+  it("(b2) memo23 pull returns nothing → lookupListing fallback fills the record, no error", async () => {
+    hoisted.cached = { prefill: staleRecord(), source: "apify" };
+    hoisted.detailResult = null; // memo23 came back empty
+    hoisted.lookupResult = staleRecord({ photos: DETAIL_PHOTOS });
+
+    const body = await callDetail();
+
+    expect(body.ok).toBe(true);
+    expect(hoisted.detailCalls).toBe(1);
+    expect(hoisted.lookupCalls).toBe(1);
+    expect(body.detailFetched).toBe(true);
+    expect(body.detailError).toBeUndefined();
+    expect(body.prefill.photos).toEqual(DETAIL_PHOTOS);
+    expect(hoisted.cachePuts).toHaveLength(1);
+  });
+
+  it("(c) both paths fail → detailError present, detailFetched false, no cache write, photos unstamped", async () => {
+    hoisted.cached = { prefill: staleRecord(), source: "apify" };
+    hoisted.detailThrows = true;
+    hoisted.lookupThrows = true;
+
+    const body = await callDetail();
+
+    expect(body.ok).toBe(true);
+    expect(hoisted.detailCalls).toBe(1);
+    expect(hoisted.lookupCalls).toBe(1);
+    expect(body.detailFetched).toBe(false);
+    expect(body.detailError).toContain("FAILED");
+    // Nothing was pulled, so nothing is stamped "known none" and the
+    // thinner record is NOT written to cache — a later click retries.
+    expect(body.prefill.photos).toBeUndefined();
     expect(hoisted.cachePuts).toHaveLength(0);
   });
 });
