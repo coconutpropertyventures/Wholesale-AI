@@ -222,6 +222,105 @@ export async function getConversation(
   return { ...base, messages };
 }
 
+// ---------- Pipelines & opportunities ----------
+
+export interface PipelineStage {
+  id: string;
+  name: string;
+}
+
+export interface GhlPipeline {
+  id: string;
+  name: string;
+  stages: PipelineStage[];
+}
+
+function mapPipeline(raw: Raw): GhlPipeline {
+  const stages = Array.isArray(raw.stages)
+    ? (raw.stages as Raw[])
+        .map((s) => ({
+          id: String(s.id ?? ""),
+          name: asString(s.name) ?? "",
+        }))
+        .filter((s) => s.id.length > 0 && s.name.length > 0)
+    : [];
+  return {
+    id: String(raw.id ?? ""),
+    name: asString(raw.name) ?? "",
+    stages,
+  };
+}
+
+export async function listPipelines(
+  locationId: string,
+): Promise<GhlPipeline[]> {
+  const qs = new URLSearchParams({ locationId });
+  const data = (await ghlFetch(
+    `/opportunities/pipelines?${qs.toString()}`,
+  )) as { pipelines?: Raw[] };
+  return (data.pipelines ?? []).map(mapPipeline);
+}
+
+export interface OpportunityCountParams {
+  locationId: string;
+  pipelineId?: string;
+  stageId?: string;
+  status?: string; // open | won | lost | abandoned | all
+}
+
+/**
+ * Count opportunities matching the filters via GET /opportunities/search
+ * with limit=1 — only meta.total is read (defensively: some responses put
+ * the total at the top level instead of under `meta`).
+ */
+export async function countOpportunities(
+  params: OpportunityCountParams,
+): Promise<number> {
+  const qs = new URLSearchParams({
+    location_id: params.locationId,
+    limit: "1",
+  });
+  if (params.pipelineId) qs.set("pipeline_id", params.pipelineId);
+  if (params.stageId) qs.set("pipeline_stage_id", params.stageId);
+  if (params.status) qs.set("status", params.status);
+  const data = (await ghlFetch(
+    `/opportunities/search?${qs.toString()}`,
+  )) as { meta?: { total?: unknown }; total?: unknown };
+  const total = data.meta?.total ?? data.total;
+  return typeof total === "number" && Number.isFinite(total) ? total : 0;
+}
+
+export type StageCountLookup = (
+  pipelineId: string,
+  stageId: string,
+) => Promise<number>;
+
+/**
+ * Pure aggregation: sum a per-(pipeline, stage) open-count lookup into
+ * stage-NAME totals across all pipelines (the same stage name in two
+ * pipelines is one number on the dashboard strip).
+ */
+export async function aggregateStageCounts(
+  pipelines: GhlPipeline[],
+  countFor: StageCountLookup,
+): Promise<Map<string, number>> {
+  const jobs: { name: string; count: Promise<number> }[] = [];
+  for (const pipeline of pipelines) {
+    for (const stage of pipeline.stages) {
+      jobs.push({
+        name: stage.name,
+        count: countFor(pipeline.id, stage.id),
+      });
+    }
+  }
+  const counts = await Promise.all(jobs.map((j) => j.count));
+  const totals = new Map<string, number>();
+  jobs.forEach((job, i) => {
+    totals.set(job.name, (totals.get(job.name) ?? 0) + counts[i]);
+  });
+  return totals;
+}
+
 // ---------- Sending ----------
 
 export interface SendSmsResult {

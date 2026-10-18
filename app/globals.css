@@ -109,6 +109,8 @@ a { color: var(--accent); }
 .badge.ok { background: var(--accent-soft); color: var(--accent); border: 1px solid #bfe3d2; }
 .badge.status { background: #eef1f5; color: var(--ink-soft); border: 1px solid var(--line); }
 .badge.grade { background: var(--dark); color: #fff; border: 1px solid var(--dark); }
+.badge.dir-in { background: #eef1f5; color: var(--ink-soft); border: 1px solid var(--line); }
+.badge.dir-out { background: var(--accent-soft); color: var(--accent); border: 1px solid #bfe3d2; }
 
 /* ---------- Pipeline strip ---------- */
 
@@ -138,12 +140,23 @@ a { color: var(--accent); }
   font-size: 12.5px; margin-bottom: 10px;
 }
 .banner.demo { border-color: #cdbcf0; background: var(--demo-soft); color: #463274; }
+.banner.ok { border-color: #bfe3d2; background: var(--accent-soft); color: var(--accent); }
 
 .convo-list { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow: auto; }
 .convo {
   text-align: left; width: 100%; border: 1px solid var(--line); background: #fff;
-  border-radius: 8px; padding: 8px 10px;
+  border-radius: 8px; padding: 8px 10px; cursor: pointer;
+  display: flex; flex-direction: column; gap: 2px;
 }
+.convo .row-actions { display: flex; gap: 10px; align-items: center; margin-top: 6px; }
+.convo .row-actions .btn { padding: 3px 10px; font-size: 12px; }
+.convo .check { display: inline-flex; gap: 5px; align-items: center; font-size: 12px; color: var(--ink-soft); cursor: pointer; }
+.reply-box { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 10px; }
+.bulk-bar {
+  margin-top: 12px; border: 1px solid var(--accent); background: var(--accent-soft);
+  border-radius: 8px; padding: 10px 12px;
+}
+.bulk-bar .meta { font-size: 12.5px; color: var(--ink-soft); margin-bottom: 8px; }
 .convo:hover { border-color: #c3cad4; }
 .convo.active { border-color: var(--accent); background: var(--accent-soft); }
 .convo .who { font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
@@ -174,6 +187,7 @@ textarea.ta { width: 100%; min-height: 96px; resize: vertical; }
 .btn {
   border: 1px solid var(--accent); background: var(--accent); color: #fff;
   border-radius: 7px; padding: 7px 14px; font-weight: 600;
+  display: inline-block; text-decoration: none; text-align: center;
 }
 .btn.secondary { background: #fff; color: var(--accent); }
 .btn.ghost { background: #fff; border-color: var(--line); color: var(--ink-soft); }

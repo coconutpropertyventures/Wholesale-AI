@@ -6,6 +6,8 @@ import {
   getDrafts,
   updateDraft,
 } from "@/lib/store/store";
+import { getContact } from "@/lib/ghl/client";
+import { resolveDraftForContact } from "@/lib/comms/draft";
 import type { Feed } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -18,8 +20,15 @@ export async function GET() {
   return NextResponse.json({ drafts: getDrafts() });
 }
 
-// POST /api/ghl/drafts  { feed, contactId?, to, body, actor? }
+// POST /api/ghl/drafts
+//   { feed, contactId?, to?, body, subject?, threadRef?, actor? }
 // Creates a draft with status "draft". Creating a draft NEVER sends anything.
+//
+// `to` is required EXCEPT for feed="ghl" with a contactId: then the server
+// resolves the recipient from the live HighLevel contact (phone, else
+// email, else name, else the id) and replaces "{first}" in the body with
+// the contact's first name. If the contact cannot be resolved, the request
+// fails with 502 — a draft is never created with a guessed recipient.
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>;
   try {
@@ -34,25 +43,58 @@ export async function POST(req: NextRequest) {
   if (
     typeof feed !== "string" ||
     !FEEDS.includes(feed as Feed) ||
-    typeof to !== "string" ||
-    to.trim().length === 0 ||
     typeof text !== "string" ||
     text.trim().length === 0
   ) {
     return NextResponse.json(
       {
         error:
-          "feed (ghl|gmail|voice), to, and a non-empty body are required.",
+          "feed (ghl|gmail|voice) and a non-empty body are required; to is required unless feed is ghl with a contactId.",
       },
       { status: 400 },
     );
   }
+  const contactIdStr =
+    typeof contactId === "string" && contactId.length > 0
+      ? contactId
+      : undefined;
+  let resolvedTo = typeof to === "string" ? to.trim() : "";
+  let resolvedBody = text;
+  if (resolvedTo.length === 0) {
+    if (feed !== "ghl" || !contactIdStr) {
+      return NextResponse.json(
+        {
+          error:
+            "to is required unless feed is ghl with a contactId to resolve it from.",
+        },
+        { status: 400 },
+      );
+    }
+    try {
+      const contact = await getContact(contactIdStr);
+      const resolved = resolveDraftForContact(contact, text);
+      resolvedTo = resolved.to;
+      resolvedBody = resolved.body;
+    } catch (err) {
+      return NextResponse.json(
+        {
+          error: `Could not resolve contact ${contactIdStr} in HighLevel: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        },
+        { status: 502 },
+      );
+    }
+  }
   const actor = typeof body.actor === "string" ? body.actor : "bradley";
   const draft = createDraft({
     feed: feed as Feed,
-    contactId: typeof contactId === "string" ? contactId : undefined,
-    to,
-    body: text,
+    contactId: contactIdStr,
+    to: resolvedTo,
+    subject: typeof body.subject === "string" ? body.subject : undefined,
+    threadRef:
+      typeof body.threadRef === "string" ? body.threadRef : undefined,
+    body: resolvedBody,
   });
   addAudit(actor, "draft.created", {
     draftId: draft.id,
@@ -76,11 +118,17 @@ export async function PATCH(req: NextRequest) {
       { status: 400 },
     );
   }
-  const { id, action } = body;
-  if (
-    typeof id !== "string" ||
-    (action !== "approve" && action !== "reject")
-  ) {
+  const { id } = body;
+  // Two client spellings exist: { action: "approve" | "reject" } and
+  // { status: "approved" | "rejected" } (the DraftsPanel wording). Accept
+  // both; they mean the same deliberate step.
+  const action =
+    body.action === "approve" || body.status === "approved"
+      ? "approve"
+      : body.action === "reject" || body.status === "rejected"
+        ? "reject"
+        : undefined;
+  if (typeof id !== "string" || !action) {
     return NextResponse.json(
       { error: 'id and action ("approve" | "reject") are required.' },
       { status: 400 },

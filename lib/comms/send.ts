@@ -9,6 +9,12 @@ import {
   sendSms,
 } from "@/lib/ghl/client";
 import {
+  getValidAccessToken,
+  gmailConfigured,
+  sendMessage as sendGmailMessage,
+  type GmailTokens,
+} from "@/lib/gmail/client";
+import {
   addAudit,
   addSuppression,
   getDraft,
@@ -40,6 +46,7 @@ function blocked(
 export async function sendApprovedDraft(
   draftId: string,
   actor: string,
+  gmailTokens?: GmailTokens | null,
 ): Promise<SendResult> {
   const draft = getDraft(draftId);
   if (!draft) {
@@ -74,9 +81,9 @@ export async function sendApprovedDraft(
     );
   }
 
-  // Gmail and Google Voice feeds are later milestones. Refuse explicitly —
-  // never pretend a message went out on an unimplemented channel.
-  if (draft.feed === "gmail" || draft.feed === "voice") {
+  // Google Voice has no official API — still unimplemented. Refuse
+  // explicitly; never pretend a message went out on a channel we cannot use.
+  if (draft.feed === "voice") {
     return blocked(
       draftId,
       actor,
@@ -85,6 +92,69 @@ export async function sendApprovedDraft(
       { feed: draft.feed, to: draft.to },
       `The "${draft.feed}" feed is not implemented yet (later milestone). Nothing was sent.`,
     );
+  }
+
+  // --- Gmail feed (user's own Google OAuth client; tokens come from the
+  // encrypted cookie the send route read off the request) ---
+  if (draft.feed === "gmail") {
+    if (!gmailConfigured()) {
+      return blocked(
+        draftId,
+        actor,
+        "blocked_not_configured",
+        "send.blocked_not_configured",
+        { feed: draft.feed, to: draft.to },
+        "Gmail is not configured (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET missing). Nothing was sent.",
+      );
+    }
+    if (!gmailTokens?.refreshToken) {
+      return blocked(
+        draftId,
+        actor,
+        "blocked_gmail_not_connected",
+        "send.blocked_gmail_not_connected",
+        { feed: draft.feed, to: draft.to },
+        "Gmail is not connected in this browser session (no OAuth tokens). Connect Gmail first. Nothing was sent.",
+      );
+    }
+    try {
+      const { accessToken } = await getValidAccessToken(gmailTokens);
+      const result = await sendGmailMessage(accessToken, {
+        to: draft.to,
+        subject: draft.subject ?? "(no subject)",
+        body: draft.body,
+        threadId: draft.threadRef,
+      });
+      const sentAt = new Date().toISOString();
+      updateDraft(draftId, {
+        status: "sent",
+        sentAt,
+        externalId: result.id,
+      });
+      addAudit(actor, "message.sent", {
+        draftId,
+        feed: draft.feed,
+        to: draft.to,
+        subject: draft.subject ?? null,
+        threadRef: draft.threadRef ?? null,
+        externalId: result.id ?? null,
+      });
+      return { ok: true, draftId, outcome: "sent", externalId: result.id };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      addAudit(actor, "send.failed", {
+        draftId,
+        feed: draft.feed,
+        to: draft.to,
+        error: message,
+      });
+      return {
+        ok: false,
+        draftId,
+        outcome: "send_failed",
+        error: `Gmail send failed: ${message}`,
+      };
+    }
   }
 
   // --- GHL feed ---

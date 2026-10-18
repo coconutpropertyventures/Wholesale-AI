@@ -6,15 +6,17 @@ import { fetchDrafts, fmtDate } from "@/components/api";
 
 /**
  * Saved message drafts from /api/ghl/drafts.
- * Approve / Reject write back via PATCH /api/ghl/drafts. Approving queues a
- * draft for the gated sending flow (suppression + DND checks) — this panel
- * never sends anything itself.
+ * Approve / Reject write back via PATCH /api/ghl/drafts. Only APPROVED
+ * drafts can be sent, and only via the "Send" button here, which calls
+ * POST /api/ghl/send — the single gated send path (approval, suppression,
+ * and live DND checks all re-run server-side at send time).
  */
 export default function DraftsPanel() {
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [sendNote, setSendNote] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     try {
@@ -60,6 +62,33 @@ export default function DraftsPanel() {
     }
   }
 
+  async function send(id: string) {
+    setBusyId(id);
+    setError(null);
+    setSendNote((prev) => ({ ...prev, [id]: "" }));
+    try {
+      const res = await fetch("/api/ghl/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ draftId: id }),
+      });
+      const data: unknown = await res.json().catch(() => null);
+      const rec = data as { ok?: boolean; error?: string } | null;
+      if (!res.ok || !rec?.ok) {
+        throw new Error(rec?.error ?? `Send failed (${res.status})`);
+      }
+      setSendNote((prev) => ({ ...prev, [id]: "Sent." }));
+      await load();
+    } catch (err) {
+      setSendNote((prev) => ({
+        ...prev,
+        [id]: err instanceof Error ? err.message : String(err),
+      }));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return (
     <section className="card" aria-label="Drafts">
       <h2>Drafts — approval queue</h2>
@@ -80,6 +109,11 @@ export default function DraftsPanel() {
               {fmtDate(d.createdAt)}
             </span>
           </div>
+          {d.subject && (
+            <div className="meta" style={{ marginTop: 4 }}>
+              Subject: {d.subject}
+            </div>
+          )}
           <div className="body">{d.body}</div>
           {d.status === "draft" && (
             <div className="btn-row">
@@ -100,16 +134,39 @@ export default function DraftsPanel() {
             </div>
           )}
           {d.status === "approved" && (
+            <div>
+              <div className="btn-row">
+                <button
+                  className="btn"
+                  disabled={busyId === d.id}
+                  onClick={() => void send(d.id)}
+                >
+                  Send now
+                </button>
+              </div>
+              <p className="muted">
+                Approved — not sent yet. Sending re-runs the suppression and
+                DND checks before anything goes out.
+              </p>
+            </div>
+          )}
+          {d.status === "sent" && (
             <p className="muted">
-              Approved — queued for the gated sending flow (suppression and
-              DND checks run before any send). Not sent yet.
+              Sent {fmtDate(d.sentAt)}
+              {d.externalId ? ` · provider id ${d.externalId}` : ""}.
             </p>
           )}
+          {sendNote[d.id] &&
+            (sendNote[d.id] === "Sent." ? (
+              <p className="small">Sent.</p>
+            ) : (
+              <div className="error">{sendNote[d.id]}</div>
+            ))}
         </div>
       ))}
       <p className="muted">
-        Nothing sends from this screen. Only approved drafts can be sent,
-        and only through the audited send path.
+        Only approved drafts can be sent, and only through the audited,
+        gated send path.
       </p>
     </section>
   );

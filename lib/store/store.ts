@@ -30,6 +30,15 @@ interface StoreData {
 
 const STORE_PATH = join(process.cwd(), "data", "store.json");
 
+// In-memory cache over the JSON file. load() reads the file once (seeding on
+// first use) and serves the cache after that; save() updates the cache and
+// then tries to persist. The file write is best-effort: on a read-only
+// filesystem (e.g. serverless deploys like Vercel) the write fails and the
+// store keeps running on memory only. That is a bridge until a hosted
+// database lands — on serverless, in-memory data lasts only for the
+// instance lifetime, so drafts created there can vanish on a cold start.
+let cache: StoreData | null = null;
+
 function seed(): StoreData {
   return {
     organizations: [
@@ -46,26 +55,39 @@ function seed(): StoreData {
 }
 
 function load(): StoreData {
+  if (cache) return cache;
+  let data: StoreData;
   if (!existsSync(STORE_PATH)) {
-    const data = seed();
+    data = seed();
+  } else {
+    const raw = readFileSync(STORE_PATH, "utf8");
+    const parsed = JSON.parse(raw) as Partial<StoreData>;
+    // Defensive: tolerate a partially-formed file from an earlier run.
+    data = {
+      organizations: parsed.organizations ?? seed().organizations,
+      drafts: parsed.drafts ?? [],
+      audit: parsed.audit ?? [],
+      suppressions: parsed.suppressions ?? [],
+    };
+  }
+  cache = data;
+  persist(data);
+  return cache;
+}
+
+function persist(data: StoreData): void {
+  try {
     mkdirSync(dirname(STORE_PATH), { recursive: true });
     writeFileSync(STORE_PATH, JSON.stringify(data, null, 2), "utf8");
-    return data;
+  } catch {
+    // Read-only filesystem (serverless): keep running on the in-memory
+    // cache only. See the note at the top of this file.
   }
-  const raw = readFileSync(STORE_PATH, "utf8");
-  const parsed = JSON.parse(raw) as Partial<StoreData>;
-  // Defensive: tolerate a partially-formed file from an earlier run.
-  return {
-    organizations: parsed.organizations ?? seed().organizations,
-    drafts: parsed.drafts ?? [],
-    audit: parsed.audit ?? [],
-    suppressions: parsed.suppressions ?? [],
-  };
 }
 
 function save(data: StoreData): void {
-  mkdirSync(dirname(STORE_PATH), { recursive: true });
-  writeFileSync(STORE_PATH, JSON.stringify(data, null, 2), "utf8");
+  cache = data;
+  persist(data);
 }
 
 // ---------- Organizations ----------
@@ -88,6 +110,8 @@ export interface CreateDraftInput {
   feed: Feed;
   contactId?: string;
   to: string;
+  subject?: string;
+  threadRef?: string;
   body: string;
   organizationId?: string;
 }
@@ -100,6 +124,8 @@ export function createDraft(input: CreateDraftInput): Draft {
     feed: input.feed,
     contactId: input.contactId,
     to: input.to,
+    subject: input.subject,
+    threadRef: input.threadRef,
     body: input.body,
     status: "draft",
     createdAt: new Date().toISOString(),

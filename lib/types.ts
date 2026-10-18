@@ -46,6 +46,8 @@ export interface Draft {
   feed: Feed;
   contactId?: string;
   to: string;             // phone or email
+  subject?: string;       // email drafts (Gmail feed)
+  threadRef?: string;     // provider thread id the reply belongs to (Gmail feed)
   body: string;
   status: DraftStatus;
   createdAt: string;
