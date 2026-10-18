@@ -4,7 +4,7 @@
  * Every result carries its assumptions and flags which inputs are unverified.
  */
 
-export type DealMode = "turnkey" | "flip" | "land";
+export type DealMode = "turnkey" | "flip" | "land" | "traditional";
 
 export interface UnderwritingInputs {
   mode: DealMode;
@@ -16,8 +16,9 @@ export interface UnderwritingInputs {
   marketValue?: number;           // MV estimate (sold comps); the swing factor
   dom?: number;                   // days on market
   priceCuts?: number;             // number of price reductions
-  arv?: number;                   // flip mode: after-repair value
-  repairEstimate?: number;        // flip mode
+  arv?: number;                   // flip + traditional mode: after-repair value
+  repairEstimate?: number;        // flip + traditional mode
+  wholesalePercent?: number;      // traditional mode: buyer all-in % of ARV (default 0.70)
   landCompValue?: number;         // land mode: comparable land value
   targetFee?: number;             // default 15000
   targetCapRate?: number;         // default 0.05
@@ -190,10 +191,49 @@ function underwriteLand(inp: UnderwritingInputs): UnderwritingResult {
   };
 }
 
+function underwriteTraditional(inp: UnderwritingInputs): UnderwritingResult {
+  // Traditional wholesale: the end buyer pays a percentage of ARV, all-in.
+  // ceiling = pct x ARV is the buyer's all-in max; the contract (MAO) must
+  // leave room for repairs plus the target fee inside that ceiling. The fee
+  // is the OUTPUT: contracting at MAO leaves exactly the target fee, and the
+  // MAO cap at list price can push the realized fee above it.
+  const unverified: string[] = [];
+  if (!inp.arv) unverified.push("arv");
+  if (!inp.repairEstimate) unverified.push("repairEstimate");
+  const fee = inp.targetFee ?? DEFAULTS.fee;
+  const pct = inp.wholesalePercent ?? 0.7;
+  const arv = inp.arv ?? 0;
+  const repairs = inp.repairEstimate ?? 0;
+  const ceiling = pct * arv;
+  const rawMao = ceiling - repairs - fee;
+  const capped = inp.listPrice > 0 ? Math.min(rawMao, inp.listPrice) : rawMao;
+  const mao = Math.max(0, capped);
+  const assignmentFee = Math.round(ceiling - repairs - mao);
+  const discountRate = motivationDiscount(inp.dom, inp.priceCuts);
+  return {
+    mode: "traditional",
+    buyerCeiling: Math.round(ceiling),
+    mao: Math.round(mao),
+    suggestedContract: Math.round(mao),
+    initialOffer: Math.round(mao),
+    assignmentFee,
+    discountRate,
+    grade: gradeForFee(assignmentFee),
+    assumptions: { wholesalePercent: pct, arv, repairs, targetFee: fee },
+    unverified,
+    explanation: [
+      `Buyer ceiling = ${(pct * 100).toFixed(0)}% x ARV $${arv.toLocaleString()} = $${Math.round(ceiling).toLocaleString()} (all-in).`,
+      `MAO = ceiling - repairs $${repairs.toLocaleString()} - fee $${fee.toLocaleString()} = $${Math.round(rawMao).toLocaleString()}${rawMao > inp.listPrice ? `, capped at list $${inp.listPrice.toLocaleString()}` : ""}${rawMao < 0 ? ", floored at $0" : ""} -> $${Math.round(mao).toLocaleString()}.`,
+      `Traditional offers go in at the number: initial offer = MAO = $${Math.round(mao).toLocaleString()}. Fee at that contract = $${assignmentFee.toLocaleString()}, grade ${gradeForFee(assignmentFee)}.`,
+    ],
+  };
+}
+
 export function underwrite(inp: UnderwritingInputs): UnderwritingResult {
   switch (inp.mode) {
     case "flip": return underwriteFlip(inp);
     case "land": return underwriteLand(inp);
+    case "traditional": return underwriteTraditional(inp);
     default: return underwriteTurnkey(inp);
   }
 }

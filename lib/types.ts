@@ -31,6 +31,7 @@ export interface Conversation {
   feed: Feed;
   contactId: string;
   contactName?: string;
+  subject?: string;       // email threads (Gmail feed)
   lastMessageBody?: string;
   lastMessageDate?: string;
   lastMessageDirection?: string;
@@ -70,4 +71,36 @@ export interface Suppression {
   value: string;          // phone or email suppressed
   reason: string;         // STOP, DND, manual
   at: string;
+}
+
+/**
+ * One row per realtor-message draft created from the Deal workbench.
+ * This is the seed data for the closed-deal learning loop: when a draft's
+ * address later matches an opportunity that reached DEALS ASSIGNED /
+ * Closed, the pattern counts as one that worked. No outcome is inferred
+ * beyond that address match — see lib/learning.ts.
+ */
+export interface MessageOutcome {
+  id: string;
+  organizationId: string;
+  draftId: string;
+  address: string;
+  mode: string;                 // turnkey | traditional | land | flip
+  variant: "first" | "offer";
+  body: string;
+  offerAmount?: number;
+  contactId?: string;
+  createdAt: string;
+}
+
+/** One AI model call, logged for cost control (see lib/ai/draft.ts). */
+export interface AiUsageEntry {
+  id: string;
+  organizationId: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;         // cache-read input tokens (billed cheap)
+  purpose: string;              // e.g. "draft-offer"
+  createdAt: string;
 }

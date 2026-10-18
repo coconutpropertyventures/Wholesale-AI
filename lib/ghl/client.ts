@@ -342,6 +342,74 @@ export function stagePinRank(stage: string, pinned: string[]): number {
   return pinned.findIndex((p) => normalizeStageName(p) === target);
 }
 
+export interface GhlOpportunity {
+  id: string;
+  name: string;
+  contactId: string;
+  pipelineId: string;
+  pipelineStageId: string;
+  status: string; // open | won | lost | abandoned
+}
+
+function mapOpportunity(raw: Raw): GhlOpportunity | null {
+  const id = asString(raw.id);
+  const contactId = asString(raw.contactId);
+  if (!id || !contactId) return null;
+  return {
+    id,
+    name: asString(raw.name) ?? "",
+    contactId,
+    pipelineId: asString(raw.pipelineId) ?? "",
+    pipelineStageId: asString(raw.pipelineStageId) ?? "",
+    status: asString(raw.status) ?? "open",
+  };
+}
+
+// 60s in-memory cache: the pipeline map, card filtering, RentCast gate and
+// learning loop all read the same opportunity set, and the dashboard must
+// not hammer HighLevel on every render.
+let openOppsCache: { at: number; locationId: string; data: GhlOpportunity[] } | null =
+  null;
+const OPEN_OPPS_TTL_MS = 60_000;
+const OPPS_PAGE_LIMIT = 100;
+const OPPS_MAX_PAGES = 100;
+
+/**
+ * Every OPEN opportunity in the location, across all pipelines, paginated
+ * through GET /opportunities/search (status=open). Cached for 60s per
+ * location. Throws GhlNotConfiguredError when no token is set.
+ */
+export async function listOpenOpportunities(
+  locationId: string,
+): Promise<GhlOpportunity[]> {
+  if (
+    openOppsCache &&
+    openOppsCache.locationId === locationId &&
+    Date.now() - openOppsCache.at < OPEN_OPPS_TTL_MS
+  ) {
+    return openOppsCache.data;
+  }
+  const all: GhlOpportunity[] = [];
+  for (let page = 1; page <= OPPS_MAX_PAGES; page++) {
+    const qs = new URLSearchParams({
+      location_id: locationId,
+      status: "open",
+      limit: String(OPPS_PAGE_LIMIT),
+      page: String(page),
+    });
+    const data = (await ghlFetch(
+      `/opportunities/search?${qs.toString()}`,
+    )) as { opportunities?: Raw[] };
+    const rows = (data.opportunities ?? [])
+      .map(mapOpportunity)
+      .filter((o): o is GhlOpportunity => o !== null);
+    all.push(...rows);
+    if (rows.length < OPPS_PAGE_LIMIT) break;
+  }
+  openOppsCache = { at: Date.now(), locationId, data: all };
+  return all;
+}
+
 // ---------- Sending ----------
 
 export interface SendSmsResult {

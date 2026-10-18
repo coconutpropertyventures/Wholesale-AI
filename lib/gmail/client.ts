@@ -611,6 +611,8 @@ export function summarizeThreads(
       feed: "gmail",
       contactId: otherEmail ?? threadId,
       contactName: otherName ?? otherEmail,
+      subject:
+        [...sorted].reverse().find((m) => m.subject)?.subject ?? undefined,
       lastMessageBody: excerpt(latest.bodyText || latest.snippet),
       lastMessageDate: latest.dateIso,
       lastMessageDirection: latest.direction,

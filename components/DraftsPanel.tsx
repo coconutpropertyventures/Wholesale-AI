@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { Draft } from "@/lib/types";
-import { fetchDrafts, fmtDate } from "@/components/api";
+import {
+  fetchAiUsage,
+  fetchDrafts,
+  fetchOutcomes,
+  fmtDate,
+  type AiUsageData,
+} from "@/components/api";
 
 /**
  * Saved message drafts from /api/ghl/drafts.
@@ -17,6 +23,8 @@ export default function DraftsPanel() {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [sendNote, setSendNote] = useState<Record<string, string>>({});
+  const [assignedUses, setAssignedUses] = useState<Record<string, number>>({});
+  const [aiUsage, setAiUsage] = useState<AiUsageData | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -29,6 +37,14 @@ export default function DraftsPanel() {
     } finally {
       setLoading(false);
     }
+    // Learning-loop labels + AI spend are best-effort decorations; their
+    // failure never hides the drafts themselves.
+    fetchOutcomes()
+      .then((data) => setAssignedUses(data.assignedUses))
+      .catch(() => setAssignedUses({}));
+    fetchAiUsage()
+      .then(setAiUsage)
+      .catch(() => setAiUsage(null));
   }, []);
 
   useEffect(() => {
@@ -92,6 +108,14 @@ export default function DraftsPanel() {
   return (
     <section className="card" aria-label="Drafts">
       <h2>Drafts — approval queue</h2>
+      {aiUsage && (
+        <p className="muted">
+          AI drafting this month: ~${aiUsage.monthCostUsd.toFixed(2)} of $
+          {aiUsage.budgetUsd} budget ({aiUsage.calls} call
+          {aiUsage.calls === 1 ? "" : "s"})
+          {!aiUsage.configured && " · AI drafting not configured (no Anthropic key)"}
+        </p>
+      )}
       {loading && <p className="muted">Loading drafts…</p>}
       {error && <div className="error">{error}</div>}
       {!loading && !error && drafts.length === 0 && (
@@ -115,6 +139,16 @@ export default function DraftsPanel() {
             </div>
           )}
           <div className="body">{d.body}</div>
+          {assignedUses[d.id] > 0 && (
+            <p className="small">
+              <span className="badge ok">
+                pattern used on {assignedUses[d.id]} assigned deal
+                {assignedUses[d.id] === 1 ? "" : "s"}
+              </span>{" "}
+              This message pattern is tied to deal(s) that reached Assigned /
+              Closed in HighLevel.
+            </p>
+          )}
           {d.status === "draft" && (
             <div className="btn-row">
               <button

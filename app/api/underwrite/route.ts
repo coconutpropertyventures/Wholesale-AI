@@ -5,7 +5,7 @@ import {
   type UnderwritingInputs,
 } from "@/lib/underwriting/model";
 
-const MODES: readonly DealMode[] = ["turnkey", "flip", "land"];
+const MODES: readonly DealMode[] = ["turnkey", "flip", "land", "traditional"];
 
 const OPTIONAL_NUMBERS = [
   "monthlyRent",
@@ -17,6 +17,7 @@ const OPTIONAL_NUMBERS = [
   "priceCuts",
   "arv",
   "repairEstimate",
+  "wholesalePercent",
   "landCompValue",
   "targetFee",
   "targetCapRate",
@@ -45,7 +46,7 @@ export async function POST(req: Request) {
   const b = body as Record<string, unknown>;
 
   if (!MODES.includes(b.mode as DealMode)) {
-    return bad('Field "mode" must be one of: turnkey, flip, land.');
+    return bad('Field "mode" must be one of: turnkey, flip, land, traditional.');
   }
   const listPrice = b.listPrice;
   if (

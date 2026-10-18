@@ -17,9 +17,11 @@ import { dirname, join } from "node:path";
 import { Pool } from "pg";
 import {
   DEFAULT_ORG_ID,
+  type AiUsageEntry,
   type AuditEntry,
   type Draft,
   type Feed,
+  type MessageOutcome,
   type Suppression,
 } from "@/lib/types";
 
@@ -34,6 +36,8 @@ interface StoreData {
   drafts: Draft[];
   audit: AuditEntry[];
   suppressions: Suppression[];
+  messageOutcomes: MessageOutcome[];
+  aiUsage: AiUsageEntry[];
 }
 
 function seed(): StoreData {
@@ -48,6 +52,8 @@ function seed(): StoreData {
     drafts: [],
     audit: [],
     suppressions: [],
+    messageOutcomes: [],
+    aiUsage: [],
   };
 }
 
@@ -100,6 +106,8 @@ function load(): StoreData {
       drafts: parsed.drafts ?? [],
       audit: parsed.audit ?? [],
       suppressions: parsed.suppressions ?? [],
+      messageOutcomes: parsed.messageOutcomes ?? [],
+      aiUsage: parsed.aiUsage ?? [],
     };
   }
   cache = data;
@@ -188,6 +196,20 @@ async function bootstrapSchema(): Promise<void> {
       value_normalized text NOT NULL,
       data jsonb NOT NULL,
       PRIMARY KEY (organization_id, value_normalized)
+    )`);
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS wai_message_outcomes (
+      id text PRIMARY KEY,
+      organization_id text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      data jsonb NOT NULL
+    )`);
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS wai_ai_usage (
+      id text PRIMARY KEY,
+      organization_id text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      data jsonb NOT NULL
     )`);
   // Seed the default organization if absent (same seed as the file store).
   const org = seed().organizations[0];
@@ -439,4 +461,128 @@ export async function listSuppressions(
   return load().suppressions.filter(
     (s) => s.organizationId === organizationId,
   );
+}
+
+// ---------- Message outcomes (learning-loop seed data) ----------
+
+export interface CreateMessageOutcomeInput {
+  draftId: string;
+  address: string;
+  mode: string;
+  variant: "first" | "offer";
+  body: string;
+  offerAmount?: number;
+  contactId?: string;
+  organizationId?: string;
+}
+
+export async function createMessageOutcome(
+  input: CreateMessageOutcomeInput,
+): Promise<MessageOutcome> {
+  const outcome: MessageOutcome = {
+    id: randomUUID(),
+    organizationId: input.organizationId ?? DEFAULT_ORG_ID,
+    draftId: input.draftId,
+    address: input.address,
+    mode: input.mode,
+    variant: input.variant,
+    body: input.body,
+    offerAmount: input.offerAmount,
+    contactId: input.contactId,
+    createdAt: new Date().toISOString(),
+  };
+  if (usePostgres()) {
+    await ensureSchema();
+    await getPool().query(
+      `INSERT INTO wai_message_outcomes (id, organization_id, created_at, data)
+       VALUES ($1, $2, $3, $4)`,
+      [outcome.id, outcome.organizationId, outcome.createdAt, JSON.stringify(outcome)],
+    );
+    return outcome;
+  }
+  const data = load();
+  data.messageOutcomes.push(outcome);
+  save(data);
+  return outcome;
+}
+
+export async function listMessageOutcomes(
+  organizationId: string = DEFAULT_ORG_ID,
+): Promise<MessageOutcome[]> {
+  if (usePostgres()) {
+    await ensureSchema();
+    const { rows } = await getPool().query<{ data: MessageOutcome }>(
+      `SELECT data FROM wai_message_outcomes WHERE organization_id = $1`,
+      [organizationId],
+    );
+    return rows
+      .map((r) => r.data)
+      .sort((a, b) =>
+        a.createdAt === b.createdAt
+          ? a.id.localeCompare(b.id)
+          : a.createdAt.localeCompare(b.createdAt),
+      );
+  }
+  return load().messageOutcomes.filter(
+    (o) => o.organizationId === organizationId,
+  );
+}
+
+// ---------- AI usage (cost control) ----------
+
+export interface AddAiUsageInput {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  purpose: string;
+  organizationId?: string;
+}
+
+export async function addAiUsage(
+  input: AddAiUsageInput,
+): Promise<AiUsageEntry> {
+  const entry: AiUsageEntry = {
+    id: randomUUID(),
+    organizationId: input.organizationId ?? DEFAULT_ORG_ID,
+    model: input.model,
+    inputTokens: input.inputTokens,
+    outputTokens: input.outputTokens,
+    cachedTokens: input.cachedTokens,
+    purpose: input.purpose,
+    createdAt: new Date().toISOString(),
+  };
+  if (usePostgres()) {
+    await ensureSchema();
+    await getPool().query(
+      `INSERT INTO wai_ai_usage (id, organization_id, created_at, data)
+       VALUES ($1, $2, $3, $4)`,
+      [entry.id, entry.organizationId, entry.createdAt, JSON.stringify(entry)],
+    );
+    return entry;
+  }
+  const data = load();
+  data.aiUsage.push(entry);
+  save(data);
+  return entry;
+}
+
+export async function listAiUsage(
+  organizationId: string = DEFAULT_ORG_ID,
+): Promise<AiUsageEntry[]> {
+  if (usePostgres()) {
+    await ensureSchema();
+    const { rows } = await getPool().query<{ data: AiUsageEntry }>(
+      `SELECT data FROM wai_ai_usage WHERE organization_id = $1`,
+      [organizationId],
+    );
+    return rows
+      .map((r) => r.data)
+      .sort((a, b) =>
+        a.createdAt === b.createdAt
+          ? a.id.localeCompare(b.id)
+          : a.createdAt.localeCompare(b.createdAt),
+      );
+  }
+  return load().aiUsage.filter((e) => e.organizationId === organizationId);
 }
