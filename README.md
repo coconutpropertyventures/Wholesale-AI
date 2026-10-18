@@ -121,10 +121,27 @@ for multi-tenant SaaS operation (every record carries an `organizationId`).
   Redfin MAP search URLs) plus an optional `zoomIn`. The app builds that
   URL from the query (`lib/deals/redfinUrl.ts`): a ZIP (or ZIP+4) query
   becomes `https://www.redfin.com/zipcode/{zip}`; any other query is
-  geocoded server-side with the OpenStreetMap Nominatim API and becomes
-  `https://www.redfin.com/filter/viewport={latN}:{latS}:{lngE}:{lngW},no-outline`
-  from the result's bounding box — an unresolvable place returns a clear
-  "try a ZIP code" error rather than a doomed Actor run. The Zillow
+  geocoded server-side with the OpenStreetMap Nominatim API
+  (`addressdetails=1`) and becomes
+  `https://www.redfin.com/zipcode/{postcode}/filter/viewport={latN}:{latS}:{lngE}:{lngW},no-outline`
+  anchored on the geocoded result's centroid postcode, with the
+  viewport clamped to at most 0.30° latitude × 0.40° longitude around
+  the bounding-box center — a bare `/filter/viewport=` URL with no
+  place path returns zero items from the Actor (verified live
+  2026-10-18), and an unclamped whole-city bounding box is
+  county-sized and returns 1,000+ rows. City searches therefore cover
+  the **central area** of the searched place. A place that resolves
+  without a postcode returns a clear "try a ZIP code" error rather
+  than a doomed Actor run. Search responses are capped at the first
+  100 mapped results (the Actor ignores `maxItems`). The Redfin
+  search Actor returns Redfin's native rows with scalar fields
+  wrapped as `{ value, level }`; `lib/deals/prefill.ts` unwraps one
+  level in its shared readers so wrapped and flat rows map
+  identically. Note the search rows carry **no listing-agent
+  contact fields at all** — agent name/phone/email stay absent on
+  that path (never invented), so blast items sourced from search
+  results alone resolve their agent from the cached detail record
+  or surface as missing-phone. The Zillow
   detail Actor receives ONLY `startUrls` (`[{url}]`, home detail URLs)
   when a link is given and/or `addresses` (`["123 Main St, City, State"]`)
   when an address is given — its optional `propertyStatus` is

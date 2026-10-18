@@ -99,7 +99,8 @@ export async function lookupListing(input: {
  * Redfin MAP search URLs — plus an optional `zoomIn` boolean. It has no
  * search/query/keyword/maxItems fields. The map URL is built by
  * lib/deals/redfinUrl.ts: a /zipcode/{zip} URL for ZIP queries, or a
- * geocoded viewport URL for city queries.
+ * geocoded /zipcode/{postcode}/filter/viewport= URL (clamped to the
+ * place's central area) for city queries.
  */
 export async function searchRedfin(query: string): Promise<DealPrefill[]> {
   const url = await resolveRedfinSearchUrl(query);

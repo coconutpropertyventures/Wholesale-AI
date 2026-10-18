@@ -32,8 +32,11 @@ export async function POST(req: NextRequest) {
   try {
     // A fresh Actor run is performed for the query itself so the list is
     // current; each result is cached per property so loading it into the
-    // workbench never costs a second pull.
-    const results = await searchRedfin(query);
+    // workbench never costs a second pull. The Actor ignores maxItems,
+    // so a broad search can return 1,000+ mapped rows — cap at the first
+    // 100 before responding and caching to bound the payload and the
+    // number of cache writes per search.
+    const results = (await searchRedfin(query)).slice(0, 100);
     await Promise.all(
       results
         .filter((r) => r.address)
