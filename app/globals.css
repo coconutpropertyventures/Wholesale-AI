@@ -277,7 +277,7 @@ table.kv td:first-child { color: var(--ink-soft); width: 45%; }
 }
 .filter-bar .btn, .filter-banner .btn { padding: 3px 10px; font-size: 12px; }
 
-/* ---------- Inbox: iMessage panes (GHL) ---------- */
+/* ---------- Inbox: iMessage panes (GHL + Gmail) ---------- */
 
 .inbox-panes {
   display: grid; grid-template-columns: 330px minmax(0, 1fr);
@@ -344,6 +344,8 @@ table.kv td:first-child { color: var(--ink-soft); width: 45%; }
 }
 .bubble.inbound { background: #e9e9eb; color: #111; border-radius: 18px 18px 18px 4px; }
 .bubble.outbound { background: #0a84ff; color: #fff; border-radius: 18px 18px 4px 18px; }
+/* Email bodies are long-form: Gmail bubbles get more room. */
+.bubble.wide { max-width: 85%; }
 .bubble-time { font-size: 11px; color: var(--ink-faint); margin-top: 2px; padding: 0 4px; }
 .composer {
   position: sticky; bottom: 0; display: flex; gap: 8px; align-items: center;
@@ -357,29 +359,6 @@ table.kv td:first-child { color: var(--ink-soft); width: 45%; }
 .composer-input:focus { outline: 2px solid #bfe3d2; border-color: var(--accent); }
 .composer-btn { border-radius: 999px; }
 .composer-note { flex-basis: 100%; margin: 2px 0 0; }
-
-/* ---------- Inbox: Gmail style ---------- */
-
-.mail-list { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-.mail-row {
-  display: flex; gap: 10px; align-items: baseline; width: 100%;
-  padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #eef0f3;
-  background: #fff; font-size: 13px;
-}
-.mail-row:last-child { border-bottom: 0; }
-.mail-row:hover { background: #f7f8fa; }
-.mail-row.active { background: var(--accent-soft); }
-.mail-sender { flex: 0 0 170px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mail-row.unread .mail-sender, .mail-row.unread .mail-subject { font-weight: 700; }
-.mail-main { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mail-snippet { color: var(--ink-faint); }
-.mail-date { color: var(--ink-faint); font-size: 12px; white-space: nowrap; }
-.mail-reader { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
-.mail-reader-subject { font-size: 17px; font-weight: 600; margin-bottom: 4px; }
-.mail-reader-meta { color: var(--ink-soft); font-size: 12.5px; margin-bottom: 10px; }
-.mail-msg { border-top: 1px solid #eef0f3; padding: 10px 0; }
-.mail-msg-meta { font-size: 12px; color: var(--ink-faint); margin-bottom: 4px; }
-.mail-msg-body { white-space: pre-wrap; font-size: 13.5px; line-height: 1.5; }
 
 /* ---------- Workbench extras ---------- */
 

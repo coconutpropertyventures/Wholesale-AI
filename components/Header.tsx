@@ -14,7 +14,6 @@ import {
  * once the user has run the OAuth connect flow; "connect" — a link into
  * that flow — when the server has Google credentials but no session yet;
  * "setup required" when no Google client is configured server-side.
- * Google Voice is not wired (no official API) and says so.
  */
 export default function Header() {
   const [ghl, setGhl] = useState<boolean | null>(null);
@@ -93,10 +92,6 @@ export default function Header() {
           </small>
         </span>
         {gmailPill}
-        <span className="pill warn">
-          <span className="dot" />
-          Google Voice <small>setup required</small>
-        </span>
       </div>
     </header>
   );

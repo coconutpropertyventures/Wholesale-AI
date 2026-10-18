@@ -11,7 +11,9 @@ export const dynamic = "force-dynamic";
 // GET /api/ghl/conversations
 //   -> { configured, conversations }
 // GET /api/ghl/conversations?conversationId=<id>
-//   -> { configured, conversationId, messages }
+//   -> { configured, conversationId, messages } — messages in chat
+//      order (oldest → newest; HighLevel returns them newest-first and
+//      the client normalizes — see lib/ghl/client.ts).
 // With no GHL token configured, lists are empty and configured is false.
 export async function GET(req: NextRequest) {
   const configured = ghlConfigured();

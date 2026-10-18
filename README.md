@@ -6,7 +6,7 @@ for multi-tenant SaaS operation (every record carries an `organizationId`).
 
 ## Milestones 1–3 (built)
 
-- Single-screen dashboard: unified inbox (HighLevel / Gmail / Google Voice feeds),
+- Single-screen dashboard: unified inbox (HighLevel / Gmail feeds),
   property pipeline, deal underwriting, AI command box.
 - **Layout (Milestone 3):** the Property Workbench (listing data +
   underwriting) sits at the very top of the page, the pipeline cards sit
@@ -33,13 +33,19 @@ for multi-tenant SaaS operation (every record carries an `organizationId`).
   drafts, and multi-select with per-contact personalized bulk drafts
   (`{first}` in a template is replaced with each contact's first name; the
   recipient is resolved server-side from the live contact).
-- **Inbox styles per feed (Milestone 3):** the HighLevel feed is
-  iMessage-style — a scrollable contacts pane (avatar initials, preview,
-  blue unread dot) beside the thread with chat bubbles (inbound gray
-  left, outbound blue right) and a sticky pill composer that saves
-  replies as drafts. The Gmail feed deliberately stays Gmail-style:
-  sender / bold-when-unread subject / snippet / date rows and a reading
-  pane with the plain email body — no bubbles for email.
+- **Inbox styles per feed:** both feeds are iMessage-style — a
+  scrollable list pane (avatar initials, preview, time, blue unread
+  dot) beside the thread with chat bubbles (inbound gray left,
+  outbound blue right) and a sticky pill composer that saves replies
+  as drafts. The Gmail feed uses the same layout: the thread list
+  shows sender / subject + snippet / time, the thread header shows
+  the email subject, and bubbles get a wider max-width (85%) for
+  long email bodies. Inside every thread, messages render oldest →
+  newest with the newest pinned to the bottom — the pane auto-scrolls
+  to the bottom when a thread opens and when a new message lands —
+  while the conversation lists themselves stay most-recent first.
+  (Milestone 3 originally shipped Gmail in a Gmail-style list/reader;
+  Bradley reversed that — bubbles everywhere.)
 - **Pipeline badges + card filtering (Milestone 3):** every contact shows
   which pipeline and stage each of their open opportunities is in (short
   chips like "Pre-Screening · New Prospect"), a distinct DEAL chip when
@@ -140,9 +146,11 @@ stated openly.
 
 ## Not yet wired (honest stubs, labeled in the UI)
 
-- Google Voice feed: Google offers no official Voice API. Planned relay via
-  Gmail notifications (read + reply through the email gateway), labeled beta.
-  Voice drafts are refused explicitly at send time until then.
+- Google Voice: removed from the UI entirely (no inbox tab, no header
+  pill) — Google offers no official Voice API, so there is no feed to
+  show. The send path still refuses drafts with feed `voice`
+  explicitly, and any stored Voice drafts still load in the drafts
+  queue.
 - AI command box: provider-agnostic (OpenAI / Anthropic / Gemini via env
   keys). With no key, the command box falls back to the approved templates
   and labels its output "rule-based". (Offer-message personalization is

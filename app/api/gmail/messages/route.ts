@@ -12,6 +12,7 @@ import {
   type GmailTokens,
 } from "@/lib/gmail/client";
 import { DEFAULT_ORG_ID, type Conversation } from "@/lib/types";
+import { sortMessagesAscending } from "@/lib/messages";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +21,7 @@ export const dynamic = "force-dynamic";
 //      thread, newest first.
 // GET /api/gmail/messages?threadId=<id>
 //   -> { configured, connected, conversation, messages, subject }
+//      with messages in chat order (oldest → newest).
 // Without client credentials or stored tokens this returns an explicit
 // not-configured / not-connected state with an empty list — never sample mail.
 
@@ -109,7 +111,10 @@ export async function GET(req: NextRequest) {
           configured: true,
           connected: true,
           conversation,
-          messages: messages.map(toConversationMessage),
+          // Chat order (oldest → newest), same contract as the GHL
+          // messages route — getThread already sorts ascending, and
+          // this keeps the guarantee explicit at the API boundary.
+          messages: sortMessagesAscending(messages.map(toConversationMessage)),
           subject: subject ?? null,
         }),
         ready.refreshedCookie,

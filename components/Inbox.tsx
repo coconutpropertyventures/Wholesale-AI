@@ -19,20 +19,25 @@ import {
   shortStageName,
   type InboxFilter,
 } from "@/lib/ghl/pipelineMap";
+import { sortMessagesAscending } from "@/lib/messages";
 
 /**
- * Unified inbox, full width, three feed tabs.
- * - GHL tab: iMessage-style two panes. Left: scrollable contacts list
- *   with avatar initials, preview, blue unread dot, and pipeline badges
- *   (stage chip, DEAL chip, +N). Right: the thread with chat bubbles and
- *   a sticky pill composer that saves replies as DRAFTS. Rows can be
- *   multi-selected for per-contact bulk drafts. When a pipeline card
- *   filter is active, only contacts in that stage are listed. When
- *   HighLevel is not configured, a single clearly-labeled DEMO
- *   conversation is shown — never presented as real data.
- * - Gmail tab: Gmail-style rows (sender, subject, snippet, date) and a
- *   reading pane with subject + plain body. Reply saves a draft.
- * - Voice tab: honest setup state (no official Google Voice API).
+ * Unified inbox, full width, two feed tabs (GHL number + Gmail). Both
+ * feeds render iMessage-style: two panes with a scrollable list on the
+ * left and a bubble thread on the right.
+ * - GHL tab: scrollable contacts list with avatar initials, preview,
+ *   blue unread dot, and pipeline badges (stage chip, DEAL chip, +N).
+ *   Rows can be multi-selected for per-contact bulk drafts. When a
+ *   pipeline card filter is active, only contacts in that stage are
+ *   listed. When HighLevel is not configured, a single clearly-labeled
+ *   DEMO conversation is shown — never presented as real data.
+ * - Gmail tab: same two-pane bubble layout. The list shows threads
+ *   (sender, snippet, time, blue unread dot); the thread header shows
+ *   the email subject and bubbles use a wider max-width for email
+ *   bodies. Reply saves a draft, same as GHL.
+ * Thread messages always render oldest → newest with the newest
+ * pinned to the bottom (auto-scroll on open/append), while the
+ * conversation lists themselves stay most-recent-activity first.
  */
 
 const DEMO_CONVERSATION: Conversation = {
@@ -67,7 +72,6 @@ const DEMO_CONVERSATION: Conversation = {
 const TABS: { id: Feed; label: string }[] = [
   { id: "ghl", label: "GHL number" },
   { id: "gmail", label: "Gmail" },
-  { id: "voice", label: "Google Voice" },
 ];
 
 function initials(name?: string): string {
@@ -111,15 +115,19 @@ function PipelineBadges({
 function Bubbles({
   messages,
   demo,
+  wide,
 }: {
   messages: ConversationMessage[];
   demo?: boolean;
+  wide?: boolean;
 }) {
   return (
     <>
       {messages.map((m) => (
         <div key={m.id} className={`bubble-row ${m.direction}`}>
-          <div className={`bubble ${m.direction}`}>{m.body}</div>
+          <div className={`bubble ${m.direction}${wide ? " wide" : ""}`}>
+            {m.body}
+          </div>
           <div className="bubble-time">
             {fmtDate(m.dateAdded)}
             {demo ? " · DEMO" : ""}
@@ -156,6 +164,11 @@ export default function Inbox({
   const [replyBusy, setReplyBusy] = useState(false);
   const replyRef = useRef<HTMLTextAreaElement | null>(null);
   const focusReplyOnSelect = useRef(false);
+  const threadScrollRef = useRef<HTMLDivElement | null>(null);
+  const threadScrollState = useRef<{ id: string | null; count: number }>({
+    id: null,
+    count: 0,
+  });
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [bulkBody, setBulkBody] = useState("");
   const [bulkNote, setBulkNote] = useState<string | null>(null);
@@ -178,6 +191,11 @@ export default function Inbox({
   const [gmailReplyBusy, setGmailReplyBusy] = useState(false);
   const gmailReplyRef = useRef<HTMLTextAreaElement | null>(null);
   const focusGmailReplyOnSelect = useRef(false);
+  const gmailThreadScrollRef = useRef<HTMLDivElement | null>(null);
+  const gmailThreadScrollState = useRef<{ id: string | null; count: number }>({
+    id: null,
+    count: 0,
+  });
 
   // Land on the Gmail tab after the OAuth round-trip (?gmail=connected).
   useEffect(() => {
@@ -269,6 +287,35 @@ export default function Inbox({
     }
   });
 
+  // Pin the newest message to the bottom of the GHL thread: jump
+  // instantly ("auto") when a conversation opens or its first messages
+  // land, smooth-scroll when a message is appended to the open thread.
+  useEffect(() => {
+    const el = threadScrollRef.current;
+    if (!el || !selectedId) return;
+    const prev = threadScrollState.current;
+    const opening = prev.id !== selectedId || prev.count === 0;
+    el.scrollTo({
+      top: el.scrollHeight,
+      behavior: opening ? "auto" : "smooth",
+    });
+    threadScrollState.current = { id: selectedId, count: messages.length };
+  }, [selectedId, messages]);
+
+  // Same pinning for the Gmail thread pane.
+  useEffect(() => {
+    const el = gmailThreadScrollRef.current;
+    const id = gmailSelected?.id ?? null;
+    if (!el || !id) return;
+    const prev = gmailThreadScrollState.current;
+    const opening = prev.id !== id || prev.count === 0;
+    el.scrollTo({
+      top: el.scrollHeight,
+      behavior: opening ? "auto" : "smooth",
+    });
+    gmailThreadScrollState.current = { id, count: gmailMessages.length };
+  }, [gmailSelected, gmailMessages]);
+
   const visibleConversations = inboxFilter
     ? conversations.filter((c) =>
         contactMatchesFilter(pipelineMap?.byContact[c.contactId], inboxFilter),
@@ -286,7 +333,7 @@ export default function Inbox({
     setReplyNote(null);
     setReplyError(null);
     if (c.messages && c.messages.length > 0) {
-      setMessages(c.messages);
+      setMessages(sortMessagesAscending(c.messages));
       return;
     }
     if (demo) {
@@ -296,7 +343,7 @@ export default function Inbox({
     setMessages([]);
     setMessagesLoading(true);
     try {
-      setMessages(await fetchConversationMessages(c.id));
+      setMessages(sortMessagesAscending(await fetchConversationMessages(c.id)));
     } catch {
       setMessages([]);
     } finally {
@@ -385,7 +432,7 @@ export default function Inbox({
     setGmailMessagesLoading(true);
     try {
       const data = await fetchGmailThread(c.id);
-      setGmailMessages(data.messages);
+      setGmailMessages(sortMessagesAscending(data.messages));
       if (data.conversation) setGmailSelected(data.conversation);
       setGmailSubject(data.subject ?? data.conversation?.subject);
     } catch (err) {
@@ -497,110 +544,114 @@ export default function Inbox({
               ) : gmailConversations.length === 0 ? (
                 <p className="muted">No recent threads found.</p>
               ) : (
-                <div className="mail-list">
-                  {gmailConversations.map((c) => {
-                    const unread =
-                      typeof c.unreadCount === "number" && c.unreadCount > 0;
-                    return (
-                      <div
-                        key={c.id}
-                        className={`mail-row ${gmailSelected?.id === c.id ? "active" : ""} ${unread ? "unread" : ""}`}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => void selectGmailConversation(c)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            void selectGmailConversation(c);
-                          }
-                        }}
-                      >
-                        <span className="mail-sender">
-                          {c.contactName ?? "Unknown sender"}
-                        </span>
-                        <span className="mail-main">
-                          <span className="mail-subject">
-                            {c.subject ?? "(no subject)"}
+                <div className="inbox-panes">
+                  <div className="pane-list" aria-label="Email threads">
+                    {gmailConversations.map((c) => {
+                      const unread =
+                        typeof c.unreadCount === "number" && c.unreadCount > 0;
+                      return (
+                        <div
+                          key={c.id}
+                          className={`convo-item ${gmailSelected?.id === c.id ? "active" : ""}`}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => void selectGmailConversation(c)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              void selectGmailConversation(c);
+                            }
+                          }}
+                        >
+                          <span className="avatar">
+                            {initials(c.contactName)}
                           </span>
-                          <span className="mail-snippet">
-                            {" — "}
-                            {c.lastMessageBody ?? ""}
+                          <span className="convo-main">
+                            <span className="convo-top">
+                              <span className="convo-name">
+                                {c.contactName ?? "Unknown sender"}
+                              </span>
+                              <span className="convo-when">
+                                {fmtDate(c.lastMessageDate)}
+                              </span>
+                            </span>
+                            <span className="convo-preview-row">
+                              <span className="convo-preview">
+                                {c.subject
+                                  ? `${c.subject} — ${c.lastMessageBody ?? ""}`
+                                  : (c.lastMessageBody ?? "")}
+                              </span>
+                              {unread && <span className="unread-dot" />}
+                            </span>
                           </span>
-                        </span>
-                        <span className="mail-date">
-                          {fmtDate(c.lastMessageDate)}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+                        </div>
+                      );
+                    })}
+                  </div>
 
-              {gmailSelected && (
-                <div className="mail-reader">
-                  <div className="mail-reader-subject">
-                    {gmailSubject ?? gmailSelected.subject ?? "(no subject)"}
-                  </div>
-                  <div className="mail-reader-meta">
-                    {gmailSelected.contactName ?? "Unknown sender"} ·{" "}
-                    {fmtDate(gmailSelected.lastMessageDate)}
-                  </div>
-                  {gmailMessagesLoading && (
-                    <p className="muted">Loading messages…</p>
-                  )}
-                  {!gmailMessagesLoading && gmailMessages.length === 0 && (
-                    <p className="muted">No messages loaded for this thread.</p>
-                  )}
-                  {gmailMessages.map((m) => (
-                    <div key={m.id} className="mail-msg">
-                      <div className="mail-msg-meta">
-                        {m.direction === "inbound" ? "Inbound" : "Outbound"} ·{" "}
-                        {fmtDate(m.dateAdded)}
-                      </div>
-                      <div className="mail-msg-body">{m.body}</div>
-                    </div>
-                  ))}
-                  <div className="reply-box">
-                    <textarea
-                      ref={gmailReplyRef}
-                      className="ta"
-                      value={gmailReplyBody}
-                      onChange={(e) => setGmailReplyBody(e.target.value)}
-                      placeholder={`Reply to ${gmailSelected.contactName ?? "this thread"}…`}
-                    />
-                    <div className="btn-row">
-                      <button
-                        className="btn"
-                        disabled={
-                          gmailReplyBusy || gmailReplyBody.trim().length === 0
-                        }
-                        onClick={() => void saveGmailReplyDraft()}
-                      >
-                        Save reply as draft
-                      </button>
-                    </div>
-                    {gmailReplyNote && (
-                      <p className="small">{gmailReplyNote}</p>
+                  <div className="pane-thread">
+                    {!gmailSelected ? (
+                      <p className="muted pane-pad">
+                        Select a thread to read it and draft a reply.
+                      </p>
+                    ) : (
+                      <>
+                        <div className="thread-head">
+                          <span className="thread-name">
+                            {gmailSubject ??
+                              gmailSelected.subject ??
+                              "(no subject)"}
+                          </span>
+                          <span className="muted small">
+                            {gmailSelected.contactName ?? "Unknown sender"}
+                          </span>
+                        </div>
+                        <div
+                          className="thread-scroll"
+                          ref={gmailThreadScrollRef}
+                        >
+                          {gmailMessagesLoading && (
+                            <p className="muted">Loading messages…</p>
+                          )}
+                          {!gmailMessagesLoading &&
+                            gmailMessages.length === 0 && (
+                              <p className="muted">
+                                No messages loaded for this thread.
+                              </p>
+                            )}
+                          <Bubbles messages={gmailMessages} wide />
+                        </div>
+                        <div className="composer">
+                          <textarea
+                            ref={gmailReplyRef}
+                            className="composer-input"
+                            rows={1}
+                            value={gmailReplyBody}
+                            onChange={(e) => setGmailReplyBody(e.target.value)}
+                            placeholder={`Reply to ${gmailSelected.contactName ?? "this thread"}… (saved as a draft)`}
+                          />
+                          <button
+                            className="btn composer-btn"
+                            disabled={
+                              gmailReplyBusy ||
+                              gmailReplyBody.trim().length === 0
+                            }
+                            onClick={() => void saveGmailReplyDraft()}
+                          >
+                            Save draft
+                          </button>
+                          {gmailReplyNote && (
+                            <p className="small composer-note">
+                              {gmailReplyNote}
+                            </p>
+                          )}
+                        </div>
+                      </>
                     )}
                   </div>
                 </div>
               )}
             </div>
           )}
-        </div>
-      )}
-
-      {tab === "voice" && (
-        <div>
-          <div className="banner">
-            Setup required — Google Voice has no official API.
-          </div>
-          <p className="small">
-            There is no supported Google Voice API for reading or sending
-            texts. The planned approach is a relay: Voice forwards text
-            notifications to Gmail, and this feed reads them from there
-            (send support is limited and flagged). Until the Gmail relay is
-            connected, no Voice messages are shown.
-          </p>
         </div>
       )}
 
@@ -722,7 +773,7 @@ export default function Inbox({
                       </span>
                       <PipelineBadges entries={selectedEntries} showAll />
                     </div>
-                    <div className="thread-scroll">
+                    <div className="thread-scroll" ref={threadScrollRef}>
                       {messagesLoading && (
                         <p className="muted">Loading messages…</p>
                       )}

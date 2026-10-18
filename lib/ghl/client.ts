@@ -15,6 +15,7 @@ import {
   type Conversation,
   type ConversationMessage,
 } from "@/lib/types";
+import { sortMessagesAscending } from "@/lib/messages";
 
 const BASE_URL = "https://services.leadconnectorhq.com";
 const API_VERSION = "2021-07-28";
@@ -207,7 +208,10 @@ export async function getConversationMessages(
   const list = Array.isArray(data.messages)
     ? data.messages
     : (data.messages?.messages ?? []);
-  return list.map(mapMessage);
+  // HighLevel returns messages newest-first; the API contract here is
+  // chat order (oldest → newest) so every client renders threads with
+  // the newest message at the bottom.
+  return sortMessagesAscending(list.map(mapMessage));
 }
 
 export async function getConversation(
