@@ -197,6 +197,105 @@ describe("resolveRedfinSearchUrl", () => {
     ).rejects.toThrow(/ZIP code/);
   });
 
+  it("reverse-geocodes the bbox center when a city-level forward result has no postcode", async () => {
+    // The real shape of a city-level Nominatim forward result: its
+    // address carries city/state/country but NO postcode. The reverse
+    // lookup of the bounding-box center (39.779815, -86.130015)
+    // returns the centroid postcode 46204, which anchors the URL.
+    const fetchImpl = stubFetch(async (url: string) => {
+      if (url.includes("/reverse")) {
+        return {
+          ok: true,
+          json: async () => ({ address: { postcode: "46204" } }),
+        };
+      }
+      return {
+        ok: true,
+        json: async () => [
+          {
+            boundingbox: ["39.63227", "39.92736", "-86.32486", "-85.93517"],
+            address: {
+              city: "Indianapolis",
+              state: "Indiana",
+              country: "United States",
+            },
+          },
+        ],
+      };
+    });
+    const url = await resolveRedfinSearchUrl("Indianapolis, IN", fetchImpl);
+    expect(url).toBe(
+      "https://www.redfin.com/zipcode/46204/filter/viewport=39.92736:39.63227:-85.93517:-86.32486,no-outline",
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const [reverseUrl, reverseInit] = (fetchImpl as ReturnType<typeof vi.fn>)
+      .mock.calls[1] as [string, { headers: Record<string, string> }];
+    expect(reverseUrl).toContain(
+      "https://nominatim.openstreetmap.org/reverse?",
+    );
+    expect(reverseUrl).toContain("format=jsonv2");
+    expect(reverseUrl).toContain("lat=39.779815");
+    expect(reverseUrl).toContain("lon=-86.130015");
+    expect(reverseInit.headers["User-Agent"]).toContain("WholesaleAI");
+  });
+
+  it("throws a try-a-ZIP error when forward and reverse both lack a postcode", async () => {
+    const fetchImpl = stubFetch(async (url: string) => {
+      if (url.includes("/reverse")) {
+        return {
+          ok: true,
+          json: async () => ({
+            address: { city: "Indianapolis", state: "Indiana" },
+          }),
+        };
+      }
+      return {
+        ok: true,
+        json: async () => [
+          {
+            boundingbox: ["39.63227", "39.92736", "-86.32486", "-85.93517"],
+            address: { city: "Indianapolis", state: "Indiana" },
+          },
+        ],
+      };
+    });
+    await expect(
+      resolveRedfinSearchUrl("Indianapolis, IN", fetchImpl),
+    ).rejects.toThrow(/could not resolve/i);
+    await expect(
+      resolveRedfinSearchUrl("Indianapolis, IN", fetchImpl),
+    ).rejects.toThrow(/ZIP code/);
+  });
+
+  it("throws a try-a-ZIP error when the reverse geocode request fails", async () => {
+    const fetchImpl = stubFetch(async (url: string) => {
+      if (url.includes("/reverse")) throw new Error("network down");
+      return {
+        ok: true,
+        json: async () => [
+          {
+            boundingbox: ["39.63227", "39.92736", "-86.32486", "-85.93517"],
+            address: { city: "Indianapolis", state: "Indiana" },
+          },
+        ],
+      };
+    });
+    await expect(
+      resolveRedfinSearchUrl("Indianapolis, IN", fetchImpl),
+    ).rejects.toThrow(/could not resolve/i);
+  });
+
+  it("does not reverse-geocode when the forward result has neither postcode nor bounding box", async () => {
+    const fetchImpl = stubFetch(async () => ({
+      ok: true,
+      json: async () => [{ address: { city: "Nowhere" } }],
+    }));
+    await expect(
+      resolveRedfinSearchUrl("Nowhere", fetchImpl),
+    ).rejects.toThrow(/could not resolve/i);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it("trims whitespace around a city query before geocoding", async () => {
     const fetchImpl = stubFetch(async () => ({
       ok: true,

@@ -15,8 +15,11 @@
 // city URL is anchored on the geocoded result's centroid postcode —
 // /zipcode/{postcode}/filter/viewport=... — with the viewport clamped
 // (see clampBoundingBox) because a whole-city bounding box is
-// county-sized and returns 1,000+ rows. City searches therefore cover
-// the CENTRAL area of the searched place.
+// county-sized and returns 1,000+ rows. A city-level forward result
+// carries no postcode in its address (only city/state/country), so the
+// centroid postcode is obtained by reverse-geocoding the bounding-box
+// center. City searches therefore cover the CENTRAL area of the
+// searched place.
 
 export interface RedfinBoundingBox {
   south: string;
@@ -83,6 +86,7 @@ export function redfinViewportUrl(
 }
 
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
+const NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse";
 // Nominatim's usage policy requires a descriptive User-Agent identifying
 // the application and a contact.
 const NOMINATIM_USER_AGENT =
@@ -96,14 +100,58 @@ export function unresolvablePlaceError(query: string): Error {
 }
 
 /**
+ * One Nominatim GET (descriptive User-Agent, 10s timeout). Returns the
+ * parsed JSON body, or null on any failure — non-OK response, network
+ * error, abort, or unparseable body. Never throws.
+ */
+async function nominatimJson(
+  url: string,
+  fetchImpl: typeof fetch,
+): Promise<unknown> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), GEOCODE_TIMEOUT_MS);
+  try {
+    const res = await fetchImpl(url, {
+      headers: {
+        "User-Agent": NOMINATIM_USER_AGENT,
+        Accept: "application/json",
+      },
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Pull a usable postcode out of a Nominatim `address` object. A ZIP+4
+ *  postcode is reduced to its first 5 digits, like a typed ZIP query. */
+function postcodeFromAddress(address: unknown): string | null {
+  const raw = (address as { postcode?: unknown } | null | undefined)
+    ?.postcode;
+  if (typeof raw === "string" && raw.trim() !== "") {
+    return zipFromQuery(raw) ?? raw.trim();
+  }
+  return null;
+}
+
+/**
  * Resolve a search query to the Redfin map URL the search Actor needs.
  * ZIP (or ZIP+4) queries never touch the network. Other queries are
  * geocoded via Nominatim (addressdetails=1): the result's centroid
  * postcode anchors a zipcode URL, narrowed by the clamped viewport when
- * a bounding box is present. A place that cannot be resolved — or that
- * resolves without a postcode — throws an error telling the caller to
- * try a ZIP code (a bare viewport URL returns zero items, so there is
- * no usable fallback). `fetchImpl` is injectable for tests.
+ * a bounding box is present. A city-level forward result carries NO
+ * postcode in its address (only city/state/country), so when it lacks
+ * one the bounding-box center is reverse-geocoded — a point lookup
+ * does return the centroid postcode. A place that cannot be resolved —
+ * or that resolves without a postcode either way — throws an error
+ * telling the caller to try a ZIP code (a bare viewport URL returns
+ * zero items, so there is no usable fallback). `fetchImpl` is
+ * injectable for tests.
  */
 export async function resolveRedfinSearchUrl(
   query: string,
@@ -116,54 +164,45 @@ export async function resolveRedfinSearchUrl(
 
   let postcode: string | null = null;
   let bb: RedfinBoundingBox | null = null;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), GEOCODE_TIMEOUT_MS);
-  try {
-    const res = await fetchImpl(
-      `${NOMINATIM_URL}?format=jsonv2&limit=1&addressdetails=1&q=${encodeURIComponent(q)}`,
-      {
-        headers: {
-          "User-Agent": NOMINATIM_USER_AGENT,
-          Accept: "application/json",
-        },
-        signal: controller.signal,
-        cache: "no-store",
-      },
-    );
-    if (res.ok) {
-      const parsed: unknown = await res.json();
-      const first = Array.isArray(parsed)
-        ? (parsed[0] as
-            | {
-                boundingbox?: unknown;
-                address?: { postcode?: unknown };
-              }
-            | undefined)
-        : undefined;
-      const rawPostcode = first?.address?.postcode;
-      if (typeof rawPostcode === "string" && rawPostcode.trim() !== "") {
-        postcode = zipFromQuery(rawPostcode) ?? rawPostcode.trim();
-      }
-      const raw = first?.boundingbox;
-      if (
-        Array.isArray(raw) &&
-        raw.length === 4 &&
-        raw.every(
-          (v) =>
-            typeof v === "string" &&
-            v.trim() !== "" &&
-            Number.isFinite(Number(v)),
-        )
-      ) {
-        // Nominatim boundingbox order: [south, north, west, east].
-        bb = { south: raw[0], north: raw[1], west: raw[2], east: raw[3] };
-      }
+  const parsed = await nominatimJson(
+    `${NOMINATIM_URL}?format=jsonv2&limit=1&addressdetails=1&q=${encodeURIComponent(q)}`,
+    fetchImpl,
+  );
+  const first = Array.isArray(parsed)
+    ? (parsed[0] as
+        | { boundingbox?: unknown; address?: unknown }
+        | undefined)
+    : undefined;
+  if (first) {
+    postcode = postcodeFromAddress(first.address);
+    const raw = first.boundingbox;
+    if (
+      Array.isArray(raw) &&
+      raw.length === 4 &&
+      raw.every(
+        (v) =>
+          typeof v === "string" &&
+          v.trim() !== "" &&
+          Number.isFinite(Number(v)),
+      )
+    ) {
+      // Nominatim boundingbox order: [south, north, west, east].
+      bb = { south: raw[0], north: raw[1], west: raw[2], east: raw[3] };
     }
-  } catch {
-    postcode = null;
-    bb = null;
-  } finally {
-    clearTimeout(timer);
+  }
+  // No forward postcode: reverse-geocode the bounding-box center for
+  // the centroid postcode. Without a bounding box there is no center
+  // to look up, so the place stays unresolvable.
+  if (!postcode && bb) {
+    const centerLat = (Number(bb.north) + Number(bb.south)) / 2;
+    const centerLng = (Number(bb.east) + Number(bb.west)) / 2;
+    const reverse = await nominatimJson(
+      `${NOMINATIM_REVERSE_URL}?format=jsonv2&lat=${fmtCoord(centerLat)}&lon=${fmtCoord(centerLng)}`,
+      fetchImpl,
+    );
+    postcode = postcodeFromAddress(
+      (reverse as { address?: unknown } | null)?.address,
+    );
   }
   if (!postcode) throw unresolvablePlaceError(q);
   if (!bb) return redfinZipUrl(postcode);
