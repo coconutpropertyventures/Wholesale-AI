@@ -17,9 +17,13 @@
 // (see clampBoundingBox) because a whole-city bounding box is
 // county-sized and returns 1,000+ rows. A city-level forward result
 // carries no postcode in its address (only city/state/country), so the
-// centroid postcode is obtained by reverse-geocoding the bounding-box
-// center. City searches therefore cover the CENTRAL area of the
-// searched place.
+// postcode is hunted by reverse-geocoding several points in the place
+// (its anchor point, the bounding-box center, then the quadrant
+// centers) — any one of them may land on a highway or other address
+// with no postcode (the Savannah, GA failure), but the postcode only
+// anchors the URL path while the clamped viewport does the geographic
+// work, so the first point that yields one wins. City searches
+// therefore cover the CENTRAL area of the searched place.
 
 export interface RedfinBoundingBox {
   south: string;
@@ -128,6 +132,46 @@ async function nominatimJson(
   }
 }
 
+export interface GeocodedPlace {
+  latitude: number;
+  longitude: number;
+  /** Centroid postcode (5-digit ZIP) when Nominatim reports one. */
+  postcode?: string;
+}
+
+/**
+ * Forward-geocode a free-form address/place to coordinates via
+ * Nominatim (same endpoint, User-Agent, and failure posture as the
+ * search-URL resolver: null on any failure, never throws). Used by the
+ * turnkey comps engine when a cached listing carries no coordinates of
+ * its own. `fetchImpl` is injectable for tests.
+ */
+export async function geocodeCoordinates(
+  query: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<GeocodedPlace | null> {
+  const q = query.trim();
+  if (!q) return null;
+  const parsed = await nominatimJson(
+    `${NOMINATIM_URL}?format=jsonv2&limit=1&addressdetails=1&q=${encodeURIComponent(q)}`,
+    fetchImpl,
+  );
+  const first = Array.isArray(parsed)
+    ? (parsed[0] as
+        | { lat?: unknown; lon?: unknown; address?: unknown }
+        | undefined)
+    : undefined;
+  if (!first) return null;
+  const latitude = Number(first.lat);
+  const longitude = Number(first.lon);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  return {
+    latitude,
+    longitude,
+    postcode: postcodeFromAddress(first.address) ?? undefined,
+  };
+}
+
 /** Pull a usable postcode out of a Nominatim `address` object. A ZIP+4
  *  postcode is reduced to its first 5 digits, like a typed ZIP query. */
 function postcodeFromAddress(address: unknown): string | null {
@@ -142,15 +186,17 @@ function postcodeFromAddress(address: unknown): string | null {
 /**
  * Resolve a search query to the Redfin map URL the search Actor needs.
  * ZIP (or ZIP+4) queries never touch the network. Other queries are
- * geocoded via Nominatim (addressdetails=1): the result's centroid
- * postcode anchors a zipcode URL, narrowed by the clamped viewport when
- * a bounding box is present. A city-level forward result carries NO
+ * geocoded via Nominatim (addressdetails=1): a postcode from the result
+ * anchors a zipcode URL, narrowed by the clamped viewport when a
+ * bounding box is present. A city-level forward result carries NO
  * postcode in its address (only city/state/country), so when it lacks
- * one the bounding-box center is reverse-geocoded — a point lookup
- * does return the centroid postcode. A place that cannot be resolved —
- * or that resolves without a postcode either way — throws an error
- * telling the caller to try a ZIP code (a bare viewport URL returns
- * zero items, so there is no usable fallback). `fetchImpl` is
+ * one, candidate points are reverse-geocoded in order — the forward
+ * result's anchor point, the bounding-box center, then the four
+ * quadrant centers (at most 6 reverse calls) — and the first postcode
+ * found wins; any single point may resolve to a road or other address
+ * with no postcode. A place that yields no postcode anywhere throws an
+ * error telling the caller to try a ZIP code (a bare viewport URL
+ * returns zero items, so there is no usable fallback). `fetchImpl` is
  * injectable for tests.
  */
 export async function resolveRedfinSearchUrl(
@@ -164,17 +210,23 @@ export async function resolveRedfinSearchUrl(
 
   let postcode: string | null = null;
   let bb: RedfinBoundingBox | null = null;
+  let anchor: { lat: number; lon: number } | null = null;
   const parsed = await nominatimJson(
     `${NOMINATIM_URL}?format=jsonv2&limit=1&addressdetails=1&q=${encodeURIComponent(q)}`,
     fetchImpl,
   );
   const first = Array.isArray(parsed)
     ? (parsed[0] as
-        | { boundingbox?: unknown; address?: unknown }
+        | { boundingbox?: unknown; address?: unknown; lat?: unknown; lon?: unknown }
         | undefined)
     : undefined;
   if (first) {
     postcode = postcodeFromAddress(first.address);
+    const anchorLat = Number(first.lat);
+    const anchorLon = Number(first.lon);
+    if (Number.isFinite(anchorLat) && Number.isFinite(anchorLon)) {
+      anchor = { lat: anchorLat, lon: anchorLon };
+    }
     const raw = first.boundingbox;
     if (
       Array.isArray(raw) &&
@@ -190,19 +242,45 @@ export async function resolveRedfinSearchUrl(
       bb = { south: raw[0], north: raw[1], west: raw[2], east: raw[3] };
     }
   }
-  // No forward postcode: reverse-geocode the bounding-box center for
-  // the centroid postcode. Without a bounding box there is no center
-  // to look up, so the place stays unresolvable.
-  if (!postcode && bb) {
-    const centerLat = (Number(bb.north) + Number(bb.south)) / 2;
-    const centerLng = (Number(bb.east) + Number(bb.west)) / 2;
-    const reverse = await nominatimJson(
-      `${NOMINATIM_REVERSE_URL}?format=jsonv2&lat=${fmtCoord(centerLat)}&lon=${fmtCoord(centerLng)}`,
-      fetchImpl,
-    );
-    postcode = postcodeFromAddress(
-      (reverse as { address?: unknown } | null)?.address,
-    );
+  // No forward postcode: reverse-geocode candidate points until one
+  // yields a postcode. Order: the place's anchor point (its forward
+  // lat/lon), the bounding-box center, then the four quadrant centers.
+  // A single point is not reliable — a center can land on a highway
+  // whose reverse result is a road address with no postcode (Savannah,
+  // GA) while the anchor sits on an addressed building — but the
+  // postcode only anchors the URL path, so any postcode inside the
+  // place is acceptable. A failed/empty reverse just moves to the
+  // next point; nominatimJson never throws.
+  if (!postcode) {
+    const points: { lat: number; lon: number }[] = [];
+    if (anchor) points.push(anchor);
+    if (bb) {
+      const south = Number(bb.south);
+      const north = Number(bb.north);
+      const west = Number(bb.west);
+      const east = Number(bb.east);
+      points.push({ lat: (south + north) / 2, lon: (west + east) / 2 });
+      const lat25 = south + 0.25 * (north - south);
+      const lat75 = south + 0.75 * (north - south);
+      const lon25 = west + 0.25 * (east - west);
+      const lon75 = west + 0.75 * (east - west);
+      points.push(
+        { lat: lat25, lon: lon25 },
+        { lat: lat25, lon: lon75 },
+        { lat: lat75, lon: lon25 },
+        { lat: lat75, lon: lon75 },
+      );
+    }
+    for (const point of points.slice(0, 6)) {
+      const reverse = await nominatimJson(
+        `${NOMINATIM_REVERSE_URL}?format=jsonv2&lat=${fmtCoord(point.lat)}&lon=${fmtCoord(point.lon)}`,
+        fetchImpl,
+      );
+      postcode = postcodeFromAddress(
+        (reverse as { address?: unknown } | null)?.address,
+      );
+      if (postcode) break;
+    }
   }
   if (!postcode) throw unresolvablePlaceError(q);
   if (!bb) return redfinZipUrl(postcode);

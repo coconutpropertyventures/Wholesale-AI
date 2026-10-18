@@ -239,6 +239,124 @@ describe("resolveRedfinSearchUrl", () => {
     expect(reverseInit.headers["User-Agent"]).toContain("WholesaleAI");
   });
 
+  it("tries the anchor point before the bbox center and uses the first postcode found (Savannah shape)", async () => {
+    // Savannah, GA (the live failure): the forward result is a
+    // boundary relation — bbox [31.8878520, 32.1896620, -81.3714270,
+    // -81.0295150] plus its own anchor lat/lon, address WITHOUT a
+    // postcode. Reverse-geocoding the anchor lands on a road address
+    // (no postcode); the bbox center (32.038757, -81.200471) yields
+    // 31401. The lat span 0.30181 exceeds the 0.30 cap, so the
+    // viewport is clamped around the center; the lng span passes.
+    const calls: string[] = [];
+    const fetchImpl = stubFetch(async (url: string) => {
+      calls.push(url);
+      if (url.includes("/reverse")) {
+        if (url.includes("lat=32.080899")) {
+          return {
+            ok: true,
+            json: async () => ({
+              address: { road: "Ogeechee Road", city: "Savannah" },
+            }),
+          };
+        }
+        if (url.includes("lat=32.038757")) {
+          return {
+            ok: true,
+            json: async () => ({ address: { postcode: "31401" } }),
+          };
+        }
+        return { ok: true, json: async () => ({ address: {} }) };
+      }
+      return {
+        ok: true,
+        json: async () => [
+          {
+            lat: "32.080899",
+            lon: "-81.091204",
+            boundingbox: ["31.8878520", "32.1896620", "-81.3714270", "-81.0295150"],
+            address: {
+              city: "Savannah",
+              state: "Georgia",
+              country: "United States",
+            },
+          },
+        ],
+      };
+    });
+    const url = await resolveRedfinSearchUrl("Savannah, GA", fetchImpl);
+    expect(url).toBe(
+      "https://www.redfin.com/zipcode/31401/filter/viewport=32.188757:31.888757:-81.029515:-81.371427,no-outline",
+    );
+    // Attempt order: forward, anchor reverse, center reverse — stop.
+    expect(calls).toHaveLength(3);
+    expect(calls[1]).toContain("lat=32.080899");
+    expect(calls[1]).toContain("lon=-81.091204");
+    expect(calls[2]).toContain("lat=32.038757");
+    expect(calls[2]).toContain("lon=-81.200471");
+  });
+
+  it("stops after the first reverse point when it already yields a postcode", async () => {
+    const fetchImpl = stubFetch(async (url: string) => {
+      if (url.includes("/reverse")) {
+        return {
+          ok: true,
+          json: async () => ({ address: { postcode: "46204" } }),
+        };
+      }
+      return {
+        ok: true,
+        json: async () => [
+          {
+            lat: "39.768403",
+            lon: "-86.158068",
+            boundingbox: ["39.63227", "39.92736", "-86.32486", "-85.93517"],
+            address: { city: "Indianapolis", state: "Indiana" },
+          },
+        ],
+      };
+    });
+    const url = await resolveRedfinSearchUrl("Indianapolis, IN", fetchImpl);
+    expect(url).toBe(
+      "https://www.redfin.com/zipcode/46204/filter/viewport=39.92736:39.63227:-85.93517:-86.32486,no-outline",
+    );
+    // Forward + exactly ONE reverse (the anchor); no center/quadrant
+    // attempts are made once a postcode is in hand.
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("throws a try-a-ZIP error after trying every candidate point without a postcode", async () => {
+    const fetchImpl = stubFetch(async (url: string) => {
+      if (url.includes("/reverse")) {
+        return {
+          ok: true,
+          json: async () => ({
+            address: { road: "Ogeechee Road", city: "Savannah" },
+          }),
+        };
+      }
+      return {
+        ok: true,
+        json: async () => [
+          {
+            lat: "32.080899",
+            lon: "-81.091204",
+            boundingbox: ["31.8878520", "32.1896620", "-81.3714270", "-81.0295150"],
+            address: { city: "Savannah", state: "Georgia" },
+          },
+        ],
+      };
+    });
+    await expect(
+      resolveRedfinSearchUrl("Savannah, GA", fetchImpl),
+    ).rejects.toThrow(/could not resolve/i);
+    await expect(
+      resolveRedfinSearchUrl("Savannah, GA", fetchImpl),
+    ).rejects.toThrow(/ZIP code/);
+    // Per attempt: 1 forward + at most 6 reverse calls (anchor,
+    // center, four quadrant centers).
+    expect(fetchImpl).toHaveBeenCalledTimes(14);
+  });
+
   it("throws a try-a-ZIP error when forward and reverse both lack a postcode", async () => {
     const fetchImpl = stubFetch(async (url: string) => {
       if (url.includes("/reverse")) {
