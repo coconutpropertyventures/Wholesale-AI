@@ -24,13 +24,23 @@ describe("turnkey model v3.1", () => {
   it("MAO = min(ceiling - 15k, list)", () => {
     expect(r.mao).toBe(154900); // 200,000 vs list -> list cap binds
   });
-  it("suggested contract below list with 8% discount (1 cut)", () => {
+  it("modeled contract uses the 8% motivation discount (1 cut)", () => {
     expect(r.discountRate).toBe(0.08);
-    expect(r.suggestedContract).toBe(142508);
+    expect(r.modeledContract).toBe(142508);
   });
-  it("fee is ceiling - contract", () => {
-    expect(r.assignmentFee).toBe(215000 - 142508);
+  it("initial offer is list - 10%; suggested contract matches when under MAO", () => {
+    expect(r.initialOffer).toBe(139410); // 154,900 x 0.90
+    expect(r.suggestedContract).toBe(139410);
+  });
+  it("fee is ceiling - initial offer", () => {
+    expect(r.assignmentFee).toBe(215000 - 139410);
     expect(r.grade).toBe("A");
+  });
+  it("suggested contract never exceeds MAO even when the opener does", () => {
+    const tight = underwrite({ mode: "turnkey", listPrice: 200000, monthlyRent: 1300, annualTaxes: 3000, annualInsurance: 1500 });
+    // ceiling = (1300*12*0.66 - 4500)/0.05 = 115,920 -> MAO 100,920 < list-10% 180,000
+    expect(tight.initialOffer).toBe(180000);
+    expect(tight.suggestedContract).toBe(tight.mao);
   });
   it("nothing unverified when all inputs supplied", () => {
     expect(r.unverified).toEqual([]);

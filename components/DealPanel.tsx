@@ -91,6 +91,7 @@ export default function DealPanel() {
   const [uwError, setUwError] = useState<string | null>(null);
   const [uwBusy, setUwBusy] = useState(false);
 
+  const [offerOverride, setOfferOverride] = useState("");
   const [offerText, setOfferText] = useState("");
   const [recipient, setRecipient] = useState("");
   const [offerError, setOfferError] = useState<string | null>(null);
@@ -150,6 +151,7 @@ export default function DealPanel() {
         throw new Error(msg);
       }
       setResult(data as UnderwritingResult);
+      setOfferOverride("");
     } catch (err) {
       setResult(null);
       setUwError(err instanceof Error ? err.message : String(err));
@@ -394,8 +396,14 @@ export default function DealPanel() {
               <div className="v">{fmtMoney(result.mao)}</div>
             </div>
             <div className="kpi hero">
-              <div className="k">Suggested offer</div>
-              <div className="v">{fmtMoney(result.suggestedContract)}</div>
+              <div className="k">
+                {result.initialOffer !== undefined
+                  ? "Initial offer (list − 10%, after intake)"
+                  : "Suggested offer"}
+              </div>
+              <div className="v">
+                {fmtMoney(result.initialOffer ?? result.suggestedContract)}
+              </div>
             </div>
             <div className="kpi">
               <div className="k">Assignment fee / spread</div>
@@ -408,6 +416,39 @@ export default function DealPanel() {
               </div>
             )}
           </div>
+          {result.buyerCeiling !== undefined && (
+            <div className="offer-override">
+              <label>
+                Offer to make (override the calculator any time)
+                <input
+                  inputMode="numeric"
+                  placeholder={String(result.initialOffer ?? result.suggestedContract)}
+                  value={offerOverride}
+                  onChange={(e) => setOfferOverride(e.target.value)}
+                />
+              </label>
+              <button type="button" onClick={() => setOfferOverride(String(result.mao))}>
+                Use MAO
+              </button>
+              {result.modeledContract !== undefined && (
+                <button
+                  type="button"
+                  onClick={() => setOfferOverride(String(result.modeledContract))}
+                >
+                  Use modeled contract
+                </button>
+              )}
+              <span className="fee-at-offer">
+                Fee at your offer:{" "}
+                {fmtMoney(
+                  result.buyerCeiling -
+                    (offerOverride.trim() !== "" && Number.isFinite(Number(offerOverride))
+                      ? Number(offerOverride)
+                      : result.initialOffer ?? result.suggestedContract)
+                )}
+              </span>
+            </div>
+          )}
           <table className="kv">
             <tbody>
               {result.modeledContract !== undefined && (

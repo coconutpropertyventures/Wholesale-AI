@@ -34,6 +34,7 @@ export interface UnderwritingResult {
   grade: "A" | "B" | "C" | "D" | "F";
   capRateAtContract?: number;
   modeledContract?: number;       // realistic contract from motivation discount, before the MAO cap
+  initialOffer?: number;          // turnkey: list - 10%, capped at MAO; the default offer after intake
   assumptions: Record<string, number | string>;
   unverified: string[];           // names of inputs that were estimated/not sourced
   explanation: string[];
@@ -96,8 +97,13 @@ function underwriteTurnkey(inp: UnderwritingInputs): UnderwritingResult {
   // graded against it and CAN go negative (Grade F). The suggested offer is
   // the modeled contract capped at MAO so a proposal never exceeds it.
   const modeledContract = Math.round(inp.listPrice * (1 - discountRate));
-  const suggestedContract = Math.min(modeledContract, Math.max(mao, 0));
-  const assignmentFee = Math.round(ceiling - modeledContract);
+  // Bradley's turnkey rule (2026-10-17): the initial offer after intake is
+  // list - 10%. The fee and grade are graded honestly against that raw
+  // opener (it can grade F). The suggested contract caps the opener at MAO,
+  // and the calculator's modeled contract stays available as an override.
+  const initialOffer = Math.round(inp.listPrice * 0.9);
+  const suggestedContract = Math.round(Math.min(initialOffer, Math.max(mao, 0)));
+  const assignmentFee = Math.round(ceiling - initialOffer);
   const capRateAtContract = suggestedContract > 0 ? noi / (suggestedContract + fee) : undefined;
 
   return {
@@ -111,6 +117,7 @@ function underwriteTurnkey(inp: UnderwritingInputs): UnderwritingResult {
     grade: gradeForFee(assignmentFee),
     capRateAtContract,
     modeledContract,
+    initialOffer,
     assumptions: {
       vacancy: DEFAULTS.vacancy, management: DEFAULTS.management,
       maintenance: DEFAULTS.maintenance, capex: DEFAULTS.capex,
@@ -121,7 +128,8 @@ function underwriteTurnkey(inp: UnderwritingInputs): UnderwritingResult {
       `NOI $${Math.round(noi).toLocaleString()} at $${rent.toLocaleString()}/mo rent with 8% vacancy, 10% management, 8% maintenance, 8% capex.`,
       `Buyer ceiling = min(NOI / ${(cap * 100).toFixed(0)}%${inp.marketValue ? `, MV $${inp.marketValue.toLocaleString()}` : ""}) = $${Math.round(ceiling).toLocaleString()}.`,
       `MAO = min(ceiling - $${fee.toLocaleString()} fee, list $${inp.listPrice.toLocaleString()}) = $${Math.round(mao).toLocaleString()}.`,
-      `Motivation discount ${(discountRate * 100).toFixed(0)}% (DOM ${inp.dom ?? 0}, cuts ${inp.priceCuts ?? 0}) -> modeled contract $${modeledContract.toLocaleString()}, fee $${assignmentFee.toLocaleString()}, grade ${gradeForFee(assignmentFee)}; suggested offer $${suggestedContract.toLocaleString()} (capped at MAO).`
+      `Initial offer = list - 10% = $${initialOffer.toLocaleString()}, made after intake answers are in. Fee at that offer $${assignmentFee.toLocaleString()}, grade ${gradeForFee(assignmentFee)}.${initialOffer > mao ? ` Opener exceeds MAO ($${Math.round(mao).toLocaleString()}) — suggested contract is capped at MAO; override from the calculator advised.` : ""}`,
+      `Calculator advisory: motivation discount ${(discountRate * 100).toFixed(0)}% (DOM ${inp.dom ?? 0}, cuts ${inp.priceCuts ?? 0}) -> modeled contract $${modeledContract.toLocaleString()} — available as an override.`
     ]
   };
 }
