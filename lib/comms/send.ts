@@ -31,15 +31,15 @@ export interface SendResult {
   externalId?: string;
 }
 
-function blocked(
+async function blocked(
   draftId: string,
   actor: string,
   outcome: string,
   action: string,
   detail: Record<string, unknown>,
   error: string,
-): SendResult {
-  addAudit(actor, action, { draftId, ...detail });
+): Promise<SendResult> {
+  await addAudit(actor, action, { draftId, ...detail });
   return { ok: false, draftId, outcome, error };
 }
 
@@ -48,9 +48,9 @@ export async function sendApprovedDraft(
   actor: string,
   gmailTokens?: GmailTokens | null,
 ): Promise<SendResult> {
-  const draft = getDraft(draftId);
+  const draft = await getDraft(draftId);
   if (!draft) {
-    addAudit(actor, "send.blocked_draft_not_found", { draftId });
+    await addAudit(actor, "send.blocked_draft_not_found", { draftId });
     return {
       ok: false,
       draftId,
@@ -70,7 +70,7 @@ export async function sendApprovedDraft(
     );
   }
 
-  if (isSuppressed(draft.to)) {
+  if (await isSuppressed(draft.to)) {
     return blocked(
       draftId,
       actor,
@@ -126,12 +126,12 @@ export async function sendApprovedDraft(
         threadId: draft.threadRef,
       });
       const sentAt = new Date().toISOString();
-      updateDraft(draftId, {
+      await updateDraft(draftId, {
         status: "sent",
         sentAt,
         externalId: result.id,
       });
-      addAudit(actor, "message.sent", {
+      await addAudit(actor, "message.sent", {
         draftId,
         feed: draft.feed,
         to: draft.to,
@@ -142,7 +142,7 @@ export async function sendApprovedDraft(
       return { ok: true, draftId, outcome: "sent", externalId: result.id };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      addAudit(actor, "send.failed", {
+      await addAudit(actor, "send.failed", {
         draftId,
         feed: draft.feed,
         to: draft.to,
@@ -185,7 +185,7 @@ export async function sendApprovedDraft(
   try {
     const contact = await getContact(draft.contactId);
     if (contact.dnd) {
-      addSuppression(draft.to, "DND");
+      await addSuppression(draft.to, "DND");
       return blocked(
         draftId,
         actor,
@@ -212,12 +212,12 @@ export async function sendApprovedDraft(
   try {
     const result = await sendSms(draft.contactId, draft.body);
     const sentAt = new Date().toISOString();
-    updateDraft(draftId, {
+    await updateDraft(draftId, {
       status: "sent",
       sentAt,
       externalId: result.messageId,
     });
-    addAudit(actor, "message.sent", {
+    await addAudit(actor, "message.sent", {
       draftId,
       feed: draft.feed,
       contactId: draft.contactId,
@@ -233,7 +233,7 @@ export async function sendApprovedDraft(
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    addAudit(actor, "send.failed", {
+    await addAudit(actor, "send.failed", {
       draftId,
       feed: draft.feed,
       contactId: draft.contactId,

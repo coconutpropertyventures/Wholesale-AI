@@ -1,12 +1,20 @@
-// JSON-file-backed repository for Wholesale AI (milestone 1).
-// Persists organizations, drafts, audit entries, and suppressions to
-// data/store.json. Deliberately simple: synchronous read/write of the whole
-// file on each mutation. Every record is stamped with an organizationId so
-// the same store can serve multiple tenants later; milestone 1 runs the
-// single default org (DEFAULT_ORG_ID).
+// Repository for Wholesale AI.
+// Two backends behind one async API (same exported names, same record
+// shapes):
+//   - Postgres, when DATABASE_URL is set (production: Supabase's
+//     transaction pooler). Tables bootstrap automatically on first use and
+//     records are stored whole as JSONB.
+//   - JSON file at data/store.json (milestone 1), when DATABASE_URL is
+//     unset — local dev and tests behave exactly as before, including the
+//     in-memory cache with best-effort file writes on read-only
+//     filesystems (serverless).
+// Every record is stamped with an organizationId so the same store can
+// serve multiple tenants later; for now it runs the single default org
+// (DEFAULT_ORG_ID).
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { Pool } from "pg";
 import {
   DEFAULT_ORG_ID,
   type AuditEntry,
@@ -28,17 +36,6 @@ interface StoreData {
   suppressions: Suppression[];
 }
 
-const STORE_PATH = join(process.cwd(), "data", "store.json");
-
-// In-memory cache over the JSON file. load() reads the file once (seeding on
-// first use) and serves the cache after that; save() updates the cache and
-// then tries to persist. The file write is best-effort: on a read-only
-// filesystem (e.g. serverless deploys like Vercel) the write fails and the
-// store keeps running on memory only. That is a bridge until a hosted
-// database lands — on serverless, in-memory data lasts only for the
-// instance lifetime, so drafts created there can vanish on a cold start.
-let cache: StoreData | null = null;
-
 function seed(): StoreData {
   return {
     organizations: [
@@ -53,6 +50,41 @@ function seed(): StoreData {
     suppressions: [],
   };
 }
+
+// ---------- Backend selection ----------
+
+function usePostgres(): boolean {
+  return Boolean(process.env.DATABASE_URL?.trim());
+}
+
+// ---------- Shared helpers ----------
+
+function normalizeValue(value: string): string {
+  const trimmed = value.trim().toLowerCase();
+  let digits = trimmed.replace(/\D/g, "");
+  // US numbers: drop a leading country-code 1 so +1 317 555 0100,
+  // (317) 555-0100, and 3175550100 all compare equal.
+  if (digits.length === 11 && digits.startsWith("1")) {
+    digits = digits.slice(1);
+  }
+  // Phone-like values compare on digits so formatting never hides a match.
+  return digits.length >= 7 ? digits : trimmed;
+}
+
+// =====================================================================
+// File backend (DATABASE_URL unset) — unchanged milestone-1 behavior.
+// =====================================================================
+
+const STORE_PATH = join(process.cwd(), "data", "store.json");
+
+// In-memory cache over the JSON file. load() reads the file once (seeding on
+// first use) and serves the cache after that; save() updates the cache and
+// then tries to persist. The file write is best-effort: on a read-only
+// filesystem (e.g. serverless deploys like Vercel) the write fails and the
+// store keeps running on memory only — on serverless, in-memory data lasts
+// only for the instance lifetime, so drafts created there can vanish on a
+// cold start. Production sets DATABASE_URL and never takes this path.
+let cache: StoreData | null = null;
 
 function load(): StoreData {
   if (cache) return cache;
@@ -90,19 +122,128 @@ function save(data: StoreData): void {
   persist(data);
 }
 
+// =====================================================================
+// Postgres backend (DATABASE_URL set).
+// Whole records live in a `data` JSONB column; key columns exist only for
+// lookup. Schema bootstrap is memoized per process.
+// =====================================================================
+
+let pool: Pool | null = null;
+
+function getPool(): Pool {
+  if (!pool) {
+    pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      // Supabase (and most hosted Postgres) require TLS; the pooler
+      // presents a chain node-postgres cannot verify against public CAs.
+      ssl: { rejectUnauthorized: false },
+      // Serverless: many short-lived processes, each with its own pool —
+      // keep it small so the pooler is not exhausted.
+      max: 3,
+    });
+    pool.on("error", (err) => {
+      // An idle client error must not take the process down.
+      console.error("Postgres pool error:", err);
+    });
+  }
+  return pool;
+}
+
+let schemaReady: Promise<void> | null = null;
+
+function ensureSchema(): Promise<void> {
+  if (!schemaReady) {
+    schemaReady = bootstrapSchema().catch((err) => {
+      // Do not cache a failed bootstrap — the next call retries.
+      schemaReady = null;
+      throw err;
+    });
+  }
+  return schemaReady;
+}
+
+async function bootstrapSchema(): Promise<void> {
+  const p = getPool();
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS wai_organizations (
+      id text PRIMARY KEY,
+      data jsonb NOT NULL
+    )`);
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS wai_drafts (
+      id text PRIMARY KEY,
+      organization_id text NOT NULL,
+      data jsonb NOT NULL
+    )`);
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS wai_audit (
+      id text PRIMARY KEY,
+      organization_id text NOT NULL,
+      at timestamptz NOT NULL DEFAULT now(),
+      data jsonb NOT NULL
+    )`);
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS wai_suppressions (
+      organization_id text NOT NULL,
+      value_normalized text NOT NULL,
+      data jsonb NOT NULL,
+      PRIMARY KEY (organization_id, value_normalized)
+    )`);
+  // Seed the default organization if absent (same seed as the file store).
+  const org = seed().organizations[0];
+  await p.query(
+    `INSERT INTO wai_organizations (id, data) VALUES ($1, $2)
+     ON CONFLICT (id) DO NOTHING`,
+    [org.id, JSON.stringify(org)],
+  );
+}
+
 // ---------- Organizations ----------
 
-export function getOrganizations(): Organization[] {
+export async function getOrganizations(): Promise<Organization[]> {
+  if (usePostgres()) {
+    await ensureSchema();
+    const { rows } = await getPool().query<{ data: Organization }>(
+      `SELECT data FROM wai_organizations ORDER BY id`,
+    );
+    return rows.map((r) => r.data);
+  }
   return load().organizations;
 }
 
 // ---------- Drafts ----------
 
-export function getDrafts(organizationId: string = DEFAULT_ORG_ID): Draft[] {
+export async function getDrafts(
+  organizationId: string = DEFAULT_ORG_ID,
+): Promise<Draft[]> {
+  if (usePostgres()) {
+    await ensureSchema();
+    const { rows } = await getPool().query<{ data: Draft }>(
+      `SELECT data FROM wai_drafts WHERE organization_id = $1`,
+      [organizationId],
+    );
+    // The file backend returns insertion order; Postgres has no inherent
+    // row order, so reproduce it from the record timestamps.
+    return rows
+      .map((r) => r.data)
+      .sort((a, b) =>
+        a.createdAt === b.createdAt
+          ? a.id.localeCompare(b.id)
+          : a.createdAt.localeCompare(b.createdAt),
+      );
+  }
   return load().drafts.filter((d) => d.organizationId === organizationId);
 }
 
-export function getDraft(id: string): Draft | undefined {
+export async function getDraft(id: string): Promise<Draft | undefined> {
+  if (usePostgres()) {
+    await ensureSchema();
+    const { rows } = await getPool().query<{ data: Draft }>(
+      `SELECT data FROM wai_drafts WHERE id = $1`,
+      [id],
+    );
+    return rows[0]?.data;
+  }
   return load().drafts.find((d) => d.id === id);
 }
 
@@ -116,8 +257,7 @@ export interface CreateDraftInput {
   organizationId?: string;
 }
 
-export function createDraft(input: CreateDraftInput): Draft {
-  const data = load();
+export async function createDraft(input: CreateDraftInput): Promise<Draft> {
   const draft: Draft = {
     id: randomUUID(),
     organizationId: input.organizationId ?? DEFAULT_ORG_ID,
@@ -130,15 +270,35 @@ export function createDraft(input: CreateDraftInput): Draft {
     status: "draft",
     createdAt: new Date().toISOString(),
   };
+  if (usePostgres()) {
+    await ensureSchema();
+    await getPool().query(
+      `INSERT INTO wai_drafts (id, organization_id, data) VALUES ($1, $2, $3)`,
+      [draft.id, draft.organizationId, JSON.stringify(draft)],
+    );
+    return draft;
+  }
+  const data = load();
   data.drafts.push(draft);
   save(data);
   return draft;
 }
 
-export function updateDraft(
+export async function updateDraft(
   id: string,
   patch: Partial<Omit<Draft, "id" | "organizationId">>,
-): Draft | undefined {
+): Promise<Draft | undefined> {
+  if (usePostgres()) {
+    await ensureSchema();
+    const existing = await getDraft(id);
+    if (!existing) return undefined;
+    const updated = { ...existing, ...patch };
+    await getPool().query(`UPDATE wai_drafts SET data = $2 WHERE id = $1`, [
+      id,
+      JSON.stringify(updated),
+    ]);
+    return updated;
+  }
   const data = load();
   const idx = data.drafts.findIndex((d) => d.id === id);
   if (idx === -1) return undefined;
@@ -149,13 +309,12 @@ export function updateDraft(
 
 // ---------- Audit ----------
 
-export function addAudit(
+export async function addAudit(
   actor: string,
   action: string,
   detail: Record<string, unknown> = {},
   organizationId: string = DEFAULT_ORG_ID,
-): AuditEntry {
-  const data = load();
+): Promise<AuditEntry> {
   const entry: AuditEntry = {
     id: randomUUID(),
     organizationId,
@@ -164,15 +323,37 @@ export function addAudit(
     action,
     detail,
   };
+  if (usePostgres()) {
+    await ensureSchema();
+    await getPool().query(
+      `INSERT INTO wai_audit (id, organization_id, at, data)
+       VALUES ($1, $2, $3, $4)`,
+      [entry.id, entry.organizationId, entry.at, JSON.stringify(entry)],
+    );
+    return entry;
+  }
+  const data = load();
   data.audit.push(entry);
   save(data);
   return entry;
 }
 
-export function listAudit(
+export async function listAudit(
   organizationId: string = DEFAULT_ORG_ID,
   limit = 200,
-): AuditEntry[] {
+): Promise<AuditEntry[]> {
+  if (usePostgres()) {
+    await ensureSchema();
+    // Newest `limit` entries, returned oldest-first like the file backend.
+    const { rows } = await getPool().query<{ data: AuditEntry }>(
+      `SELECT data FROM wai_audit
+       WHERE organization_id = $1
+       ORDER BY at DESC
+       LIMIT $2`,
+      [organizationId, limit],
+    );
+    return rows.map((r) => r.data).reverse();
+  }
   const entries = load().audit.filter(
     (e) => e.organizationId === organizationId,
   );
@@ -181,30 +362,51 @@ export function listAudit(
 
 // ---------- Suppressions ----------
 
-function normalizeValue(value: string): string {
-  const trimmed = value.trim().toLowerCase();
-  let digits = trimmed.replace(/\D/g, "");
-  // US numbers: drop a leading country-code 1 so +1 317 555 0100,
-  // (317) 555-0100, and 3175550100 all compare equal.
-  if (digits.length === 11 && digits.startsWith("1")) {
-    digits = digits.slice(1);
-  }
-  // Phone-like values compare on digits so formatting never hides a match.
-  return digits.length >= 7 ? digits : trimmed;
-}
-
-export function isSuppressed(value: string): boolean {
+export async function isSuppressed(value: string): Promise<boolean> {
   const target = normalizeValue(value);
+  if (usePostgres()) {
+    await ensureSchema();
+    // Matches the file backend: suppression checks are not scoped to one
+    // organization — a suppressed value is suppressed, period.
+    const { rows } = await getPool().query(
+      `SELECT 1 FROM wai_suppressions WHERE value_normalized = $1 LIMIT 1`,
+      [target],
+    );
+    return rows.length > 0;
+  }
   return load().suppressions.some(
     (s) => normalizeValue(s.value) === target,
   );
 }
 
-export function addSuppression(
+export async function addSuppression(
   value: string,
   reason: string,
   organizationId: string = DEFAULT_ORG_ID,
-): Suppression {
+): Promise<Suppression> {
+  if (usePostgres()) {
+    await ensureSchema();
+    const normalized = normalizeValue(value);
+    const { rows } = await getPool().query<{ data: Suppression }>(
+      `SELECT data FROM wai_suppressions
+       WHERE organization_id = $1 AND value_normalized = $2`,
+      [organizationId, normalized],
+    );
+    if (rows[0]) return rows[0].data;
+    const suppression: Suppression = {
+      organizationId,
+      value,
+      reason,
+      at: new Date().toISOString(),
+    };
+    await getPool().query(
+      `INSERT INTO wai_suppressions (organization_id, value_normalized, data)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (organization_id, value_normalized) DO NOTHING`,
+      [organizationId, normalized, JSON.stringify(suppression)],
+    );
+    return suppression;
+  }
   const data = load();
   const existing = data.suppressions.find(
     (s) =>
@@ -223,9 +425,17 @@ export function addSuppression(
   return suppression;
 }
 
-export function listSuppressions(
+export async function listSuppressions(
   organizationId: string = DEFAULT_ORG_ID,
-): Suppression[] {
+): Promise<Suppression[]> {
+  if (usePostgres()) {
+    await ensureSchema();
+    const { rows } = await getPool().query<{ data: Suppression }>(
+      `SELECT data FROM wai_suppressions WHERE organization_id = $1`,
+      [organizationId],
+    );
+    return rows.map((r) => r.data);
+  }
   return load().suppressions.filter(
     (s) => s.organizationId === organizationId,
   );

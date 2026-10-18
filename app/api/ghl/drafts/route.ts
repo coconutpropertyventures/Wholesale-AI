@@ -17,7 +17,7 @@ const FEEDS: Feed[] = ["ghl", "gmail", "voice"];
 // GET /api/ghl/drafts -> { drafts }
 // (Route name kept under /api/ghl per the app layout; drafts cover all feeds.)
 export async function GET() {
-  return NextResponse.json({ drafts: getDrafts() });
+  return NextResponse.json({ drafts: await getDrafts() });
 }
 
 // POST /api/ghl/drafts
@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
     }
   }
   const actor = typeof body.actor === "string" ? body.actor : "bradley";
-  const draft = createDraft({
+  const draft = await createDraft({
     feed: feed as Feed,
     contactId: contactIdStr,
     to: resolvedTo,
@@ -96,7 +96,7 @@ export async function POST(req: NextRequest) {
       typeof body.threadRef === "string" ? body.threadRef : undefined,
     body: resolvedBody,
   });
-  addAudit(actor, "draft.created", {
+  await addAudit(actor, "draft.created", {
     draftId: draft.id,
     feed: draft.feed,
     contactId: draft.contactId ?? null,
@@ -134,7 +134,7 @@ export async function PATCH(req: NextRequest) {
       { status: 400 },
     );
   }
-  const existing = getDraft(id);
+  const existing = await getDraft(id);
   if (!existing) {
     return NextResponse.json(
       { error: `Draft ${id} not found.` },
@@ -144,12 +144,12 @@ export async function PATCH(req: NextRequest) {
   const actor = typeof body.actor === "string" ? body.actor : "bradley";
   const updated =
     action === "approve"
-      ? updateDraft(id, {
+      ? await updateDraft(id, {
           status: "approved",
           approvedAt: new Date().toISOString(),
         })
-      : updateDraft(id, { status: "rejected" });
-  addAudit(actor, action === "approve" ? "draft.approved" : "draft.rejected", {
+      : await updateDraft(id, { status: "rejected" });
+  await addAudit(actor, action === "approve" ? "draft.approved" : "draft.rejected", {
     draftId: id,
     feed: existing.feed,
     to: existing.to,

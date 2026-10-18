@@ -321,6 +321,27 @@ export async function aggregateStageCounts(
   return totals;
 }
 
+/**
+ * Normalize a stage name for MATCHING only: lowercase and strip every
+ * non-alphanumeric character. Real HighLevel stage names are decorated —
+ * e.g. the New Prospect stage is literally "🚨 NEW PROSPECT 🚨" — so pin
+ * comparisons must not be exact-string. Display names are never altered;
+ * this is used only to decide ordering.
+ */
+export function normalizeStageName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * Rank of a stage within a pinned-first list (0 = first pin), or -1 when
+ * the stage is not pinned. Both sides are compared after
+ * normalizeStageName, so "🚨 NEW PROSPECT 🚨" matches the pin "New Prospect".
+ */
+export function stagePinRank(stage: string, pinned: string[]): number {
+  const target = normalizeStageName(stage);
+  return pinned.findIndex((p) => normalizeStageName(p) === target);
+}
+
 // ---------- Sending ----------
 
 export interface SendSmsResult {

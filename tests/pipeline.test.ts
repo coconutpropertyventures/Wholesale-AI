@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   aggregateStageCounts,
+  normalizeStageName,
+  stagePinRank,
   type GhlPipeline,
 } from "../lib/ghl/client";
 
@@ -53,5 +55,27 @@ describe("aggregateStageCounts", () => {
       "pipe-2:s3",
       "pipe-2:s4",
     ]);
+  });
+});
+
+describe("normalizeStageName / stagePinRank", () => {
+  const PINS = ["New Prospect", "Contacted"];
+
+  it("strips decoration, punctuation and case for matching", () => {
+    expect(normalizeStageName("🚨 NEW PROSPECT 🚨")).toBe("newprospect");
+    expect(normalizeStageName("New Prospect")).toBe("newprospect");
+    expect(normalizeStageName("  Contacted!! ")).toBe("contacted");
+    expect(normalizeStageName("Under Contract")).toBe("undercontract");
+  });
+
+  it("ranks pinned stages by pin order, matching decorated real names", () => {
+    expect(stagePinRank("🚨 NEW PROSPECT 🚨", PINS)).toBe(0);
+    expect(stagePinRank("Contacted", PINS)).toBe(1);
+    expect(stagePinRank("contacted", PINS)).toBe(1);
+  });
+
+  it("returns -1 for unpinned stages", () => {
+    expect(stagePinRank("Under Contract", PINS)).toBe(-1);
+    expect(stagePinRank("New Prospect Follow-Up", PINS)).toBe(-1);
   });
 });

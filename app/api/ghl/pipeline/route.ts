@@ -5,6 +5,7 @@ import {
   ghlConfigured,
   ghlLocationId,
   listPipelines,
+  stagePinRank,
 } from "@/lib/ghl/client";
 
 export const dynamic = "force-dynamic";
@@ -51,8 +52,11 @@ export async function GET() {
     const stages = [...byStage.entries()]
       .map(([stage, count]) => ({ stage, count }))
       .sort((a, b) => {
-        const pa = PRIORITY_STAGES.indexOf(a.stage);
-        const pb = PRIORITY_STAGES.indexOf(b.stage);
+        // Pin matching is normalized (see stagePinRank): real stage names
+        // carry decoration like "🚨 NEW PROSPECT 🚨". Display names are
+        // passed through exactly as HighLevel returns them.
+        const pa = stagePinRank(a.stage, PRIORITY_STAGES);
+        const pb = stagePinRank(b.stage, PRIORITY_STAGES);
         if (pa !== -1 || pb !== -1) {
           if (pa === -1) return 1;
           if (pb === -1) return -1;

@@ -80,18 +80,28 @@ npm run build
 npm run start        # serves on $PORT (default 3000)
 ```
 
-Put real secrets in the host's environment, never in the repo. App state
-(drafts, audit log, suppressions) lives in `data/store.json` behind a
-repository interface, ready to swap for Postgres when multi-tenant billing
-lands (Milestone 3: OAuth marketplace app instead of per-user tokens,
-subscriptions, per-tenant data isolation enforcement).
+Put real secrets in the host's environment, never in the repo.
 
-Store volatility note: the store keeps an in-memory cache and treats the
-file write as best-effort, so on a read-only filesystem (e.g. Vercel
-serverless) the app runs on memory only — drafts/audit/suppressions then
-last only for the lifetime of the serverless instance and can vanish on a
-cold start. A hosted database is the fix and is future work; on any normal
-writable host the file persists exactly as before.
+### App storage (drafts, audit log, suppressions)
+
+The store (`lib/store/store.ts`) has two backends behind one repository
+interface:
+
+- **Postgres — set `DATABASE_URL`.** Production points it at Supabase's
+  transaction pooler (port 6543), the right fit for serverless. Tables
+  (`wai_organizations`, `wai_drafts`, `wai_audit`, `wai_suppressions`)
+  bootstrap automatically on first use — no migrations to run — and each
+  record is stored whole as JSONB alongside its lookup keys. The default
+  organization is seeded on bootstrap if absent.
+- **JSON file — `DATABASE_URL` unset.** Local dev and tests use
+  `data/store.json` exactly as before, behind an in-memory cache.
+
+Store volatility note (file backend only): the cache treats the file write
+as best-effort, so on a read-only filesystem (e.g. Vercel serverless
+without `DATABASE_URL`) the app runs on memory only —
+drafts/audit/suppressions then last only for the lifetime of the
+serverless instance and can vanish on a cold start. Setting `DATABASE_URL`
+removes the caveat entirely.
 
 ### Gmail connection (optional, for the Gmail feed)
 
