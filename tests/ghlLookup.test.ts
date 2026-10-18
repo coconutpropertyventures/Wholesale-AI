@@ -5,11 +5,13 @@ import {
   GhlApiError,
 } from "../lib/ghl/client";
 
-// findContactByPhone must use GET /contacts/lookup (locationId + E.164
-// phone): v2's /contacts/search is POST-only and a GET there 400s — that
-// was the live blast agent-resolution failure on 2026-10-18. These tests
-// pin the endpoint, the params, the exact-digit filter, and the richer
-// ghlFetch error (status + response-body snippet).
+// findContactByPhone must use POST /contacts/search with a
+// `phone eq <E.164>` filter (body format verified live on 2026-10-18).
+// GET /contacts/search 400s (POST-only), and GET /contacts/lookup —
+// which works over OAuth — is mis-routed as /contacts/{id} under the
+// app's Private Integration Token auth. These tests pin the method,
+// the path, the request body, the exact-digit post-filter, and the
+// richer ghlFetch error (status + response-body snippet).
 
 const prevToken = process.env.GHL_PRIVATE_TOKEN;
 
@@ -35,8 +37,8 @@ function stubFetch(payload: unknown, ok = true, status = 200) {
 }
 
 describe("findContactByPhone", () => {
-  it("queries /contacts/lookup with locationId and the E.164 phone", async () => {
-    const fetchMock = stubFetch({ contacts: [] });
+  it("POSTs /contacts/search with locationId and a phone eq E.164 filter", async () => {
+    const fetchMock = stubFetch({ contacts: [], total: 0 });
 
     await findContactByPhone("loc-1", "317-550-0700");
 
@@ -47,12 +49,22 @@ describe("findContactByPhone", () => {
     ];
     const parsed = new URL(url);
     expect(parsed.origin + parsed.pathname).toBe(
-      "https://services.leadconnectorhq.com/contacts/lookup",
+      "https://services.leadconnectorhq.com/contacts/search",
     );
-    expect(parsed.searchParams.get("locationId")).toBe("loc-1");
-    expect(parsed.searchParams.get("phone")).toBe("+13175500700");
-    expect(parsed.searchParams.get("query")).toBeNull();
-    expect(init.method ?? "GET").toBe("GET");
+    expect(init.method).toBe("POST");
+    const body = JSON.parse(init.body as string) as {
+      locationId?: string;
+      pageLimit?: number;
+      filters?: { field: string; operator: string; value: string }[];
+    };
+    expect(body.locationId).toBe("loc-1");
+    expect(body.pageLimit).toBe(25);
+    expect(body.filters).toHaveLength(1);
+    expect(body.filters?.[0]).toEqual({
+      field: "phone",
+      operator: "eq",
+      value: "+13175500700",
+    });
   });
 
   it("returns the contact whose digits match exactly", async () => {
@@ -151,5 +163,23 @@ describe("ghlFetch error diagnosability", () => {
     await expect(
       findContactByPhone("loc-1", "317-550-0700"),
     ).rejects.toThrow(/HighLevel API error 400/);
+  });
+
+  it("surfaces HighLevel's own error body from a failed search", async () => {
+    stubFetch(
+      { error: "Contact with id lookup not found" },
+      false,
+      400,
+    );
+
+    const err = await findContactByPhone("loc-1", "317-550-0700").catch(
+      (e: unknown) => e,
+    );
+
+    expect(err).toBeInstanceOf(GhlApiError);
+    expect((err as GhlApiError).status).toBe(400);
+    expect((err as Error).message).toContain(
+      "Contact with id lookup not found",
+    );
   });
 });

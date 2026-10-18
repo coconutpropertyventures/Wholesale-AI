@@ -491,15 +491,26 @@ export function toE164Phone(phone?: string): string | undefined {
 }
 
 /**
- * Canonical-contact lookup by phone. Uses GET /contacts/lookup with the
- * number in E.164 form — v2's /contacts/search is POST-only, so a GET
- * against it 400s before any contact work happens (diagnosed live
- * 2026-10-18: blast agent resolution died there with a bare 400 while
- * the same payload created fine once lookup replaced search). Lookup
- * can return near matches, so results still go through an exact
- * normalized-digit equality check. Returns null when no contact carries
- * that number — callers create one instead of ever duplicating a
- * realtor. Lookup errors throw; there is no silent fallback.
+ * Canonical-contact lookup by phone, via POST /contacts/search (the
+ * search-contacts-advanced operation) with a single `phone eq <E.164>`
+ * filter — verified live 2026-10-18, it returns the right contact.
+ *
+ * Do NOT "simplify" this back to either older form; both are dead ends
+ * (diagnosed live 2026-10-18):
+ *  - GET /contacts/search: /contacts/search is POST-only in v2, so a
+ *    GET there 400s before any contact work happens — that was the
+ *    original blast agent-resolution failure.
+ *  - GET /contacts/lookup: works through the OAuth/MCP channel, but
+ *    this app authenticates with a Private Integration Token, and
+ *    under PIT auth the request is routed as GET /contacts/{contactId}
+ *    with id "lookup" and 400s with {"error":"Contact with id lookup
+ *    not found"}. The endpoint is unusable from the app.
+ *
+ * The eq filter should be exact already, but results still go through
+ * a normalized-digit equality check (defense in depth). Returns null
+ * when no contact carries that number — callers create one instead of
+ * ever duplicating a realtor. Lookup errors throw; there is no silent
+ * fallback.
  */
 export async function findContactByPhone(
   locationId: string,
@@ -507,13 +518,20 @@ export async function findContactByPhone(
 ): Promise<Contact | null> {
   const target = normalizePhoneDigits(phone);
   if (target.length < 7) return null;
-  const qs = new URLSearchParams({
-    locationId,
-    phone: toE164Phone(phone) ?? phone,
-  });
-  const data = (await ghlFetch(`/contacts/lookup?${qs.toString()}`)) as {
-    contacts?: Raw[];
-  };
+  const data = (await ghlFetch(`/contacts/search`, {
+    method: "POST",
+    body: JSON.stringify({
+      locationId,
+      pageLimit: 25,
+      filters: [
+        {
+          field: "phone",
+          operator: "eq",
+          value: toE164Phone(phone) ?? phone,
+        },
+      ],
+    }),
+  })) as { contacts?: Raw[] };
   const matches = (data.contacts ?? [])
     .map(mapContact)
     .filter((c) => c.phone && normalizePhoneDigits(c.phone) === target);
