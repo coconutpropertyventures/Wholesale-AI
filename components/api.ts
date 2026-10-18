@@ -385,20 +385,64 @@ export interface RedfinSearchResult {
   ok: boolean;
   configured?: boolean;
   results: DealPrefill[];
+  /** Rows the search actually pulled (post 500-cap), before filters. */
+  totalReturned?: number;
+  /** Rows surviving the filters, before the 100-row display slice. */
+  totalMatched?: number;
   reason?: string;
 }
 
+export type { SearchFilters } from "@/lib/deals/searchFilters";
+import type { SearchFilters } from "@/lib/deals/searchFilters";
+
 export async function searchRedfinListings(
   query: string,
+  filters?: SearchFilters,
 ): Promise<RedfinSearchResult> {
-  const rec = await postJson("/api/deals/search", { query });
+  const rec = await postJson("/api/deals/search", {
+    query,
+    ...(filters ? { filters } : {}),
+  });
   if (!rec) return { ok: false, results: [], reason: "Search returned no response." };
   return {
     ok: rec.ok === true,
     configured: typeof rec.configured === "boolean" ? rec.configured : undefined,
     results: pickArray(rec, "results") as DealPrefill[],
+    totalReturned:
+      typeof rec.totalReturned === "number" ? rec.totalReturned : undefined,
+    totalMatched:
+      typeof rec.totalMatched === "number" ? rec.totalMatched : undefined,
     reason: str(rec.reason),
   };
+}
+
+// ---------- Cached listing photos (hover preview) ----------
+
+export interface CachedPhotosResult {
+  ok: boolean;
+  photos: string[];
+  /** True when a cached detail record actually carries photos. */
+  cached: boolean;
+}
+
+/** Cache-only photo read (GET /api/deals/photos) — never triggers an
+ *  Apify pull. The one allowed pull lives in fetchPropertyDetail. */
+export async function fetchCachedPhotos(
+  address: string,
+): Promise<CachedPhotosResult> {
+  try {
+    const raw = await getJson(
+      `/api/deals/photos?address=${encodeURIComponent(address)}`,
+    );
+    const rec = asRecord(raw);
+    if (!rec) return { ok: false, photos: [], cached: false };
+    const photos = pickArray(rec, "photos").filter(
+      (u): u is string => typeof u === "string",
+    );
+    return { ok: rec.ok === true, photos, cached: rec.cached === true };
+  } catch {
+    return { ok: false, photos: [], cached: false };
+  }
 }
 
 // ---------- RentCast verification (under-contract only) ----------

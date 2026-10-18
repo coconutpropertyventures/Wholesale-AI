@@ -13,6 +13,7 @@ import {
   createDraft,
   createOutcome,
   draftOfferAi,
+  fetchCachedPhotos,
   fetchComps,
   fetchPropertyDetail,
   fmtMoney,
@@ -22,6 +23,7 @@ import {
   verifyRentcast,
   type BlastRunDetailData,
   type CompsResult,
+  type SearchFilters,
   type VerifyResult,
 } from "@/components/api";
 import { fillMissingPrefill } from "@/lib/deals/prefill";
@@ -50,6 +52,11 @@ import { fillMissingPrefill } from "@/lib/deals/prefill";
  *    exclusions and pacing rails still apply. "Select properties"
  *    toggles the per-card blast checkboxes; the selected set builds a
  *    review-path run (draft, approved in the Blast panel).
+ *    A filter bar (min/max price, min DOM, min beds/baths) narrows
+ *    results server-side on the pulled rows — no extra pull. Result
+ *    cards preview listing photos on hover: cache-first, with at most
+ *    ONE on-demand detail pull per property per session — never a
+ *    bulk prefetch.
  * 5. RentCast verification — visible only when the deal is marked under
  *    contract; the server enforces the gate regardless.
  */
@@ -186,6 +193,32 @@ export default function DealPanel({
   const [searchNote, setSearchNote] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [searchResults, setSearchResults] = useState<DealPrefill[]>([]);
+
+  // Search filters (price / DOM / beds / baths), applied server-side
+  // to the pulled rows before the display slice — they never cost an
+  // extra pull, and they take effect on the next Search click (each
+  // search is a fresh, 500-capped pull by design). Deliberately NO
+  // price-reduced filter: the search rows carry no reduction signal
+  // (verified across 315 real rows), and faking one is not an option.
+  const [fltMinPrice, setFltMinPrice] = useState("");
+  const [fltMaxPrice, setFltMaxPrice] = useState("");
+  const [fltMinDom, setFltMinDom] = useState("");
+  const [fltMinBeds, setFltMinBeds] = useState("");
+  const [fltMinBaths, setFltMinBaths] = useState("");
+
+  // Hover photo previews, keyed by property address. A property is
+  // asked about at most once per session (photoAskedRef): cache read
+  // first, then — only on real hover intent — the ONE on-demand
+  // detail pull behind POST /api/deals/detail. Nothing is ever
+  // bulk-prefetched.
+  type PhotoState =
+    | { status: "loading" }
+    | { status: "ready"; photos: string[]; index: number }
+    | { status: "empty" };
+  const [photoByAddr, setPhotoByAddr] = useState<Record<string, PhotoState>>({});
+  const [photoVisibleFor, setPhotoVisibleFor] = useState<string | null>(null);
+  const photoAskedRef = useRef<Set<string>>(new Set());
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Results toolbar (blast) state
   const [selectionMode, setSelectionMode] = useState(false);
@@ -504,14 +537,44 @@ export default function DealPanel({
     }
   }
 
+  function currentFilters(): SearchFilters {
+    const out: SearchFilters = {};
+    const put = (key: keyof SearchFilters, v: string) => {
+      const n = num(v);
+      if (n !== undefined && n >= 0) out[key] = n;
+    };
+    put("minPrice", fltMinPrice);
+    put("maxPrice", fltMaxPrice);
+    put("minDom", fltMinDom);
+    put("minBeds", fltMinBeds);
+    put("minBaths", fltMinBaths);
+    return out;
+  }
+
+  const anyFilterSet =
+    [fltMinPrice, fltMaxPrice, fltMinDom, fltMinBeds, fltMinBaths].some(
+      (v) => v.trim() !== "",
+    );
+
+  function clearFilters() {
+    setFltMinPrice("");
+    setFltMaxPrice("");
+    setFltMinDom("");
+    setFltMinBeds("");
+    setFltMinBaths("");
+  }
+
   async function runSearch() {
     if (!searchQuery.trim() || searchBusy) return;
     setSearchBusy(true);
     setSearchNote(null);
     setSearchError(null);
     setSearchResults([]);
+    setPhotoVisibleFor(null);
+    const filters = currentFilters();
+    const filtersActive = Object.keys(filters).length > 0;
     try {
-      const res = await searchRedfinListings(searchQuery.trim());
+      const res = await searchRedfinListings(searchQuery.trim(), filters);
       if (!res.ok) throw new Error(res.reason ?? "Search failed.");
       if (res.configured === false) {
         setSearchNote(
@@ -520,16 +583,112 @@ export default function DealPanel({
         return;
       }
       setSearchResults(res.results);
-      setSearchNote(
-        res.results.length === 0
-          ? "No listings returned for that search."
-          : `${res.results.length} listing${res.results.length === 1 ? "" : "s"} — “Run underwriting” loads one into the calculator from the cache.`,
-      );
+      const pulled = res.totalReturned ?? res.results.length;
+      const matched = res.totalMatched ?? res.results.length;
+      if (res.results.length === 0) {
+        setSearchNote(
+          pulled > 0 && filtersActive
+            ? `No listings matched those filters (${pulled} pulled, cap 500). Loosen a filter and search again.`
+            : "No listings returned for that search.",
+        );
+      } else {
+        setSearchNote(
+          `${res.results.length} shown of ${matched} matching (${pulled} pulled, cap 500) — “Run underwriting” loads one into the calculator from the cache.`,
+        );
+      }
     } catch (err) {
       setSearchError(err instanceof Error ? err.message : String(err));
     } finally {
       setSearchBusy(false);
     }
+  }
+
+  // ---------- Hover photo previews ----------
+
+  /**
+   * Resolve a card's photos, at most once per property per session:
+   * the cache read first (free), then — when the cache has none — the
+   * single on-demand detail pull (POST /api/deals/detail), whose
+   * merged record carries the photos from that pull. A property whose
+   * detail has no photos is remembered as "empty" and never re-asked.
+   */
+  async function ensurePhotos(p: DealPrefill) {
+    const addr = p.address;
+    if (!addr || photoAskedRef.current.has(addr)) return;
+    photoAskedRef.current.add(addr);
+    setPhotoByAddr((prev) => ({ ...prev, [addr]: { status: "loading" } }));
+    try {
+      const cached = await fetchCachedPhotos(addr);
+      if (cached.photos.length > 0) {
+        setPhotoByAddr((prev) => ({
+          ...prev,
+          [addr]: { status: "ready", photos: cached.photos, index: 0 },
+        }));
+        return;
+      }
+      const res = await fetchPropertyDetail({
+        address: addr,
+        sourceUrl: p.sourceUrl,
+        prefill: p,
+      });
+      const photos = res.ok ? (res.prefill?.photos ?? []) : [];
+      setPhotoByAddr((prev) => ({
+        ...prev,
+        [addr]:
+          photos.length > 0
+            ? { status: "ready", photos, index: 0 }
+            : { status: "empty" },
+      }));
+    } catch {
+      setPhotoByAddr((prev) => ({ ...prev, [addr]: { status: "empty" } }));
+    }
+  }
+
+  function onCardEnter(p: DealPrefill) {
+    if (!p.address) return;
+    const addr = p.address;
+    // Photos already resolved this session show instantly; otherwise
+    // the preview (and its one allowed pull) waits for ~600ms of real
+    // hover intent so a mouse skimming the grid pulls nothing.
+    if (photoByAddr[addr]?.status === "ready" || photoByAddr[addr]?.status === "empty") {
+      setPhotoVisibleFor(addr);
+      return;
+    }
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    hoverTimerRef.current = setTimeout(() => {
+      setPhotoVisibleFor(addr);
+      void ensurePhotos(p);
+    }, 600);
+  }
+
+  function onCardLeave(p: DealPrefill) {
+    if (hoverTimerRef.current) {
+      clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+    if (p.address && photoVisibleFor === p.address) setPhotoVisibleFor(null);
+  }
+
+  /** Touch path: the Photos button is an explicit tap — no intent
+   *  delay, and tapping again hides the preview. */
+  function togglePhotos(p: DealPrefill) {
+    if (!p.address) return;
+    if (photoVisibleFor === p.address) {
+      setPhotoVisibleFor(null);
+      return;
+    }
+    setPhotoVisibleFor(p.address);
+    void ensurePhotos(p);
+  }
+
+  function stepPhoto(addr: string, delta: number) {
+    setPhotoByAddr((prev) => {
+      const st = prev[addr];
+      if (!st || st.status !== "ready") return prev;
+      const index =
+        (st.index + delta + st.photos.length) % st.photos.length;
+      return { ...prev, [addr]: { ...st, index } };
+    });
   }
 
   /**
@@ -885,6 +1044,71 @@ export default function DealPanel({
       {searchNote && <p className="small">{searchNote}</p>}
       {searchError && <div className="error">{searchError}</div>}
 
+      <div className="filter-bar" aria-label="Search filters">
+        <span className="filter-title">Filters</span>
+        <label className="filter-field">
+          Min price $
+          <input
+            id="fp-min-price"
+            inputMode="numeric"
+            value={fltMinPrice}
+            onChange={(e) => setFltMinPrice(e.target.value)}
+            placeholder="50000"
+          />
+        </label>
+        <label className="filter-field">
+          Max price $
+          <input
+            id="fp-max-price"
+            inputMode="numeric"
+            value={fltMaxPrice}
+            onChange={(e) => setFltMaxPrice(e.target.value)}
+            placeholder="200000"
+          />
+        </label>
+        <label className="filter-field">
+          Min DOM
+          <input
+            id="fp-min-dom"
+            inputMode="numeric"
+            value={fltMinDom}
+            onChange={(e) => setFltMinDom(e.target.value)}
+            placeholder="90"
+          />
+        </label>
+        <label className="filter-field">
+          Min beds
+          <input
+            id="fp-min-beds"
+            inputMode="numeric"
+            value={fltMinBeds}
+            onChange={(e) => setFltMinBeds(e.target.value)}
+            placeholder="3"
+          />
+        </label>
+        <label className="filter-field">
+          Min baths
+          <input
+            id="fp-min-baths"
+            inputMode="decimal"
+            value={fltMinBaths}
+            onChange={(e) => setFltMinBaths(e.target.value)}
+            placeholder="2"
+          />
+        </label>
+        <button
+          className="btn secondary"
+          onClick={clearFilters}
+          disabled={!anyFilterSet}
+        >
+          Clear filters
+        </button>
+        <span className="small">
+          Filters apply on Search — each search is a fresh pull (capped
+          at 500 listings), filtering itself is free.
+        </span>
+      </div>
+
       {searchResults.length > 0 && (
         <div className="results-toolbar">
           <span className="small">
@@ -929,8 +1153,17 @@ export default function DealPanel({
 
       {searchResults.length > 0 && (
         <div className="search-cards">
-          {searchResults.map((p, i) => (
-            <div className="search-card" key={`${p.address ?? i}-${i}`}>
+          {searchResults.map((p, i) => {
+            const photoState = p.address ? photoByAddr[p.address] : undefined;
+            const photosVisible =
+              p.address !== undefined && photoVisibleFor === p.address;
+            return (
+            <div
+              className="search-card"
+              key={`${p.address ?? i}-${i}`}
+              onMouseEnter={() => onCardEnter(p)}
+              onMouseLeave={() => onCardLeave(p)}
+            >
               <div className="search-card-addr">{p.address ?? "Unknown address"}</div>
               <div className="search-card-meta">
                 {p.listPrice !== undefined && <span>{fmtMoney(p.listPrice)}</span>}
@@ -953,6 +1186,14 @@ export default function DealPanel({
                     ? "Loading full property details + comps…"
                     : "Run underwriting"}
                 </button>
+                <button
+                  className="btn secondary"
+                  onClick={() => togglePhotos(p)}
+                  disabled={!p.address}
+                  aria-expanded={photosVisible}
+                >
+                  Photos
+                </button>
                 {selectionMode && onToggleListing && (
                   <label className="blast-pick">
                     <input
@@ -966,8 +1207,53 @@ export default function DealPanel({
                   </label>
                 )}
               </div>
+              {photosVisible && photoState && (
+                <div className="photo-pop">
+                  {photoState.status === "loading" && (
+                    <p className="small">Loading photos…</p>
+                  )}
+                  {photoState.status === "empty" && (
+                    <p className="small">No photos available</p>
+                  )}
+                  {photoState.status === "ready" && (
+                    <>
+                      {/* Plain <img>: remote Redfin CDN URLs, no
+                          next/image domain config to maintain. */}
+                      <img
+                        src={photoState.photos[photoState.index]}
+                        alt={`Photo of ${p.address ?? "listing"}`}
+                        loading="lazy"
+                      />
+                      {photoState.photos.length > 1 && p.address && (
+                        <div className="photo-nav">
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            onClick={() => stepPhoto(p.address as string, -1)}
+                            aria-label="Previous photo"
+                          >
+                            ‹
+                          </button>
+                          <span className="small">
+                            {photoState.index + 1} / {photoState.photos.length}
+                          </span>
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            onClick={() => stepPhoto(p.address as string, 1)}
+                            aria-label="Next photo"
+                          >
+                            ›
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

@@ -53,6 +53,13 @@ export interface DealPrefill {
   /** Listing brokerage (e.g. "F.C. Tucker Company") when a detail
    *  source reports one. Context only — never dialed. */
   agentBrokerage?: string;
+  /** Listing photo URLs (Redfin CDN), when a DETAIL record carries
+   *  them — search rows never do. Populated by mapRedfinDetailPrefill
+   *  from the row's photoTags map (see extractDetailPhotos), capped
+   *  at MAX_DETAIL_PHOTOS. Powers the workbench hover preview; the
+   *  URLs cache with the "apify-detail" record like every other
+   *  detail field, so a photo is paid for once. */
+  photos?: string[];
   source: "zillow" | "redfin" | "apify" | "rentcast";
 }
 
@@ -303,6 +310,7 @@ const PREFILL_KEYS: (keyof DealPrefill)[] = [
   "agentPhone",
   "agentEmail",
   "agentBrokerage",
+  "photos",
   "source",
 ];
 
@@ -415,6 +423,64 @@ function detailStreet(row: Raw): string | undefined {
   return street || undefined;
 }
 
+/** The hover preview needs a handful of photos, not the whole shoot. */
+export const MAX_DETAIL_PHOTOS = 8;
+
+/**
+ * Listing photo URLs from a memo23 detail row. Shapes pinned from a
+ * verified live row (225 N New Jersey St, Indianapolis; dataset
+ * AaApW7NmuBmfM6neq, 2026-10-18):
+ *
+ *   photoTags.tagsByPhotoId ......... { "<photoId>": { photoUrl,
+ *     thumbnailphotoUrl }, ... } — the FULL set (32 photos on the
+ *     verified row); photoIds ascend in listing order, so sorting by
+ *     numeric id reproduces the gallery order. The same map is
+ *     duplicated at aboveTheFold.photoTags (fallback).
+ *   preloadImageUrls ................ only the FIRST photo (mid-size);
+ *     also mirrored at initialInfo.preloadImageUrls.
+ *   addressSectionInfo.primaryPhotoUrl  the first photo, full size.
+ *
+ * NEVER mapped: recommendedAgent.* / askAgent.* / offerInsights.*
+ * photo URLs are agent HEADSHOTS (Redfin's own touring agents), not
+ * photos of the property — the same decoy family the agent mapper
+ * avoids. URLs are deduped and capped at MAX_DETAIL_PHOTOS.
+ */
+export function extractDetailPhotos(row: Raw): string[] {
+  const urls: string[] = [];
+  const push = (v: unknown) => {
+    if (
+      typeof v === "string" &&
+      v.startsWith("http") &&
+      !urls.includes(v) &&
+      urls.length < MAX_DETAIL_PHOTOS
+    ) {
+      urls.push(v);
+    }
+  };
+  const fromTags = (tagsByPhotoId: unknown) => {
+    const map = asRecord(tagsByPhotoId);
+    if (!map) return;
+    const entries = Object.entries(map).sort(
+      (a, b) => Number(a[0]) - Number(b[0]),
+    );
+    for (const [, entry] of entries) {
+      push(asRecord(entry)?.photoUrl);
+    }
+  };
+  fromTags(dig(row, "photoTags.tagsByPhotoId"));
+  if (urls.length === 0) fromTags(dig(row, "aboveTheFold.photoTags.tagsByPhotoId"));
+  if (urls.length === 0) {
+    for (const key of ["preloadImageUrls", "initialInfo.preloadImageUrls"]) {
+      const arr = dig(row, key);
+      if (Array.isArray(arr)) for (const u of arr) push(u);
+    }
+  }
+  if (urls.length === 0) {
+    push(firstStr(row, ["addressSectionInfo.primaryPhotoUrl"]));
+  }
+  return urls;
+}
+
 /**
  * Full property prefill from a memo23 Redfin DETAIL row — the record
  * behind the workbench's "fullest record" merge. Field shapes pinned
@@ -473,6 +539,7 @@ export function mapRedfinDetailPrefill(row: Raw): DealPrefill {
   const city = firstStr(row, ["city", "cityName"]);
   const state = firstStr(row, ["state", "stateOrProvinceCode"]);
   const zip = firstStr(row, ["zip", "postalCode", "zipcode", "zipCode"]);
+  const photos = extractDetailPhotos(row);
   const addressParts = [street, city, state].filter(Boolean).join(", ");
   const address = addressParts
     ? zip
@@ -532,6 +599,7 @@ export function mapRedfinDetailPrefill(row: Raw): DealPrefill {
     agentName: detail.agentName,
     agentPhone: detail.agentPhone,
     agentBrokerage: detail.agentBrokerage,
+    photos: photos.length > 0 ? photos : undefined,
     sourceUrl: detail.sourceUrl,
     source: "redfin",
   };

@@ -374,7 +374,25 @@ table.kv td:first-child { color: var(--ink-soft); width: 45%; }
 .inline-row { display: flex; gap: 8px; }
 .inline-row input { flex: 1; }
 .search-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; margin-top: 10px; }
-.search-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: #fbfcfd; }
+.search-card { position: relative; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: #fbfcfd; }
+
+/* ---------- Search filters + hover photos ---------- */
+.filter-bar {
+  display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;
+  margin-top: 12px; padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: 8px; background: #fbfcfd;
+}
+.filter-title { font-weight: 600; font-size: 13px; padding-bottom: 6px; }
+.filter-field { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--ink-soft); }
+.filter-field input { width: 92px; }
+.photo-pop {
+  position: absolute; left: 8px; right: 8px; top: calc(100% - 6px); z-index: 30;
+  border: 1px solid var(--line); border-radius: 8px; background: #fff;
+  box-shadow: 0 10px 28px rgba(15, 30, 45, 0.22); padding: 8px;
+}
+.photo-pop img { width: 100%; height: auto; border-radius: 6px; display: block; }
+.photo-pop p { margin: 4px 2px; }
+.photo-nav { display: flex; gap: 8px; align-items: center; justify-content: center; margin-top: 6px; }
 
 /* ---------- Blast ---------- */
 .inline-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
