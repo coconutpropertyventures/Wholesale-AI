@@ -527,6 +527,215 @@ export async function fetchAiUsage(): Promise<AiUsageData | null> {
   }
 }
 
+// ---------- Blast ----------
+
+export interface BlastRunData {
+  id: string;
+  source: string;
+  stageRef?: { pipelineId: string; stageId: string };
+  scriptKey: string;
+  status: string;
+  dailyCap: number;
+  note?: string;
+  lastSentAt?: string;
+  groupSentCount: number;
+  createdAt: string;
+  startedAt?: string;
+}
+
+export interface BlastItemData {
+  id: string;
+  runId: string;
+  contactId?: string;
+  contactName?: string;
+  firstName?: string;
+  opportunityId?: string;
+  street: string;
+  phone?: string;
+  status: string;
+  ghlMessageId?: string;
+  error?: string;
+  sentAt?: string;
+  createdAt: string;
+}
+
+export interface BlastCountsData {
+  total: number;
+  queued: number;
+  sending: number;
+  sent: number;
+  skippedDnd: number;
+  failed: number;
+  noPhone: number;
+  suppressed: number;
+  recent: number;
+  active: number;
+}
+
+export interface BlastRunDetailData {
+  run: BlastRunData;
+  items: BlastItemData[];
+  counts: BlastCountsData;
+  sentToday: number;
+  outcome?: Record<string, unknown>;
+}
+
+function numOr(v: unknown, fallback: number): number {
+  return typeof v === "number" && Number.isFinite(v) ? v : fallback;
+}
+
+function normalizeBlastRun(v: unknown): BlastRunData | null {
+  const r = asRecord(v);
+  if (!r || typeof r.id !== "string") return null;
+  const stageRef = asRecord(r.stageRef);
+  return {
+    id: r.id,
+    source: str(r.source) ?? "search",
+    stageRef:
+      stageRef &&
+      typeof stageRef.pipelineId === "string" &&
+      typeof stageRef.stageId === "string"
+        ? { pipelineId: stageRef.pipelineId, stageId: stageRef.stageId }
+        : undefined,
+    scriptKey: str(r.scriptKey) ?? "turnkey_opener",
+    status: str(r.status) ?? "draft",
+    dailyCap: numOr(r.dailyCap, 250),
+    note: str(r.note),
+    lastSentAt: str(r.lastSentAt),
+    groupSentCount: numOr(r.groupSentCount, 0),
+    createdAt: str(r.createdAt) ?? "",
+    startedAt: str(r.startedAt),
+  };
+}
+
+function normalizeBlastItem(v: unknown): BlastItemData | null {
+  const r = asRecord(v);
+  if (!r || typeof r.id !== "string") return null;
+  return {
+    id: r.id,
+    runId: str(r.runId) ?? "",
+    contactId: str(r.contactId),
+    contactName: str(r.contactName),
+    firstName: str(r.firstName),
+    opportunityId: str(r.opportunityId),
+    street: str(r.street) ?? "",
+    phone: str(r.phone),
+    status: str(r.status) ?? "queued",
+    ghlMessageId: str(r.ghlMessageId),
+    error: str(r.error),
+    sentAt: str(r.sentAt),
+    createdAt: str(r.createdAt) ?? "",
+  };
+}
+
+function normalizeBlastCounts(v: unknown): BlastCountsData {
+  const r = asRecord(v);
+  return {
+    total: numOr(r?.total, 0),
+    queued: numOr(r?.queued, 0),
+    sending: numOr(r?.sending, 0),
+    sent: numOr(r?.sent, 0),
+    skippedDnd: numOr(r?.skippedDnd, 0),
+    failed: numOr(r?.failed, 0),
+    noPhone: numOr(r?.noPhone, 0),
+    suppressed: numOr(r?.suppressed, 0),
+    recent: numOr(r?.recent, 0),
+    active: numOr(r?.active, 0),
+  };
+}
+
+function normalizeBlastDetail(raw: unknown): BlastRunDetailData | null {
+  const rec = asRecord(raw);
+  const run = normalizeBlastRun(rec?.run);
+  if (!run) return null;
+  return {
+    run,
+    items: pickArray(raw, "items")
+      .map(normalizeBlastItem)
+      .filter((i): i is BlastItemData => i !== null),
+    counts: normalizeBlastCounts(rec?.counts),
+    sentToday: numOr(rec?.sentToday, 0),
+    outcome: asRecord(rec?.outcome) ?? undefined,
+  };
+}
+
+async function postJsonOrThrow(url: string, body?: unknown): Promise<unknown> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data: unknown = await res.json().catch(() => null);
+  if (!res.ok) {
+    const msg =
+      (data as { error?: string; reason?: string } | null)?.error ??
+      (data as { error?: string; reason?: string } | null)?.reason ??
+      `POST ${url} failed (${res.status})`;
+    throw new Error(msg);
+  }
+  return data;
+}
+
+/** All runs (newest first) with counts — the panel reloads this to
+ *  resume progress display; sending itself is server-side. */
+export async function fetchBlastRuns(): Promise<{
+  configured: boolean;
+  runs: { run: BlastRunData; counts: BlastCountsData; sentToday: number }[];
+}> {
+  const raw = await getJson("/api/blast/runs");
+  const rec = asRecord(raw);
+  const runs = pickArray(raw, "runs")
+    .map((entry) => {
+      const e = asRecord(entry);
+      const run = normalizeBlastRun(e?.run);
+      if (!run) return null;
+      return {
+        run,
+        counts: normalizeBlastCounts(e?.counts),
+        sentToday: numOr(e?.sentToday, 0),
+      };
+    })
+    .filter(
+      (
+        x,
+      ): x is {
+        run: BlastRunData;
+        counts: BlastCountsData;
+        sentToday: number;
+      } => x !== null,
+    );
+  return { configured: rec?.configured === true, runs };
+}
+
+export async function fetchBlastRun(
+  id: string,
+): Promise<BlastRunDetailData | null> {
+  return normalizeBlastDetail(await getJson(`/api/blast/runs/${id}`));
+}
+
+export async function createBlastRun(payload: {
+  source: "search" | "stage";
+  stageRef?: { pipelineId: string; stageId: string };
+  properties?: unknown[];
+  scriptKey: string;
+  dailyCap?: number;
+}): Promise<BlastRunDetailData> {
+  const raw = await postJsonOrThrow("/api/blast/runs", payload);
+  const detail = normalizeBlastDetail(raw);
+  if (!detail) throw new Error("Blast run build returned no run.");
+  return detail;
+}
+
+export async function blastRunAction(
+  id: string,
+  action: "approve" | "step" | "pause" | "stop",
+): Promise<BlastRunDetailData> {
+  const raw = await postJsonOrThrow(`/api/blast/runs/${id}/${action}`);
+  const detail = normalizeBlastDetail(raw);
+  if (!detail) throw new Error(`Blast ${action} returned no run.`);
+  return detail;
+}
+
 // ---------- Formatting ----------
 
 export function fmtMoney(v: number | undefined | null): string {

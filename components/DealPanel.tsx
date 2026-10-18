@@ -127,7 +127,17 @@ const MODE_TITLES: Record<string, string> = {
   flip: "Fix & flip",
 };
 
-export default function DealPanel({ mode }: { mode: DealMode }) {
+export default function DealPanel({
+  mode,
+  selectedListings = [],
+  onToggleListing,
+}: {
+  mode: DealMode;
+  /** Workbench properties checked for a blast run (page-level state,
+   *  shared with the Blast panel). Identity is the property address. */
+  selectedListings?: DealPrefill[];
+  onToggleListing?: (property: DealPrefill, checked: boolean) => void;
+}) {
   const [f, setF] = useState<Fields>(EMPTY);
   const [result, setResult] = useState<UnderwritingResult | null>(null);
   const [uwError, setUwError] = useState<string | null>(null);
@@ -599,14 +609,29 @@ export default function DealPanel({ mode }: { mode: DealMode }) {
                 {p.valueEstimate !== undefined && (
                   <span>Est. {fmtMoney(p.valueEstimate)}</span>
                 )}
+                {p.agentName && <span>Agent: {p.agentName}</span>}
               </div>
-              <button
-                className="btn"
-                onClick={() => void loadAndUnderwrite(p)}
-                disabled={uwBusy}
-              >
-                Run underwriting
-              </button>
+              <div className="inline-actions">
+                <button
+                  className="btn"
+                  onClick={() => void loadAndUnderwrite(p)}
+                  disabled={uwBusy}
+                >
+                  Run underwriting
+                </button>
+                {onToggleListing && (
+                  <label className="blast-pick">
+                    <input
+                      type="checkbox"
+                      checked={selectedListings.some(
+                        (s) => s.address === p.address,
+                      )}
+                      onChange={(e) => onToggleListing(p, e.target.checked)}
+                    />
+                    Add to blast
+                  </label>
+                )}
+              </div>
             </div>
           ))}
         </div>

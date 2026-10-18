@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Header from "@/components/Header";
 import PipelineStrip from "@/components/PipelineStrip";
 import Inbox from "@/components/Inbox";
 import DealPanel from "@/components/DealPanel";
+import BlastPanel from "@/components/BlastPanel";
 import DraftsPanel from "@/components/DraftsPanel";
 import AiCommand from "@/components/AiCommand";
 import {
@@ -13,6 +14,7 @@ import {
 } from "@/components/api";
 import type { InboxFilter } from "@/lib/ghl/pipelineMap";
 import type { DealMode } from "@/lib/underwriting/model";
+import type { DealPrefill } from "@/lib/deals/prefill";
 
 /**
  * Wholesale AI — command center (milestone 3 layout).
@@ -34,6 +36,19 @@ export default function HomePage() {
   const [houseMode, setHouseMode] = useState<HouseMode>("turnkey");
   const [inboxFilter, setInboxFilter] = useState<InboxFilter | null>(null);
   const [pipelineMap, setPipelineMap] = useState<PipelineMapData | null>(null);
+  // Workbench properties checked for a blast run — shared between the
+  // DealPanel result cards (checkboxes) and the Blast panel (queue source).
+  const [selectedListings, setSelectedListings] = useState<DealPrefill[]>([]);
+
+  const toggleListing = useCallback(
+    (property: DealPrefill, checked: boolean) => {
+      setSelectedListings((prev) => {
+        const rest = prev.filter((p) => p.address !== property.address);
+        return checked ? [...rest, property] : rest;
+      });
+    },
+    [],
+  );
 
   // Restore persisted mode after mount (defaults render identically on
   // the server, so no hydration mismatch).
@@ -120,7 +135,11 @@ export default function HomePage() {
           )}
         </div>
 
-        <DealPanel mode={mode} />
+        <DealPanel
+          mode={mode}
+          selectedListings={selectedListings}
+          onToggleListing={toggleListing}
+        />
 
         <PipelineStrip
           pipelineMap={pipelineMap}
@@ -132,6 +151,12 @@ export default function HomePage() {
           pipelineMap={pipelineMap}
           inboxFilter={inboxFilter}
           onClearFilter={() => setInboxFilter(null)}
+        />
+
+        <BlastPanel
+          pipelineMap={pipelineMap}
+          selectedListings={selectedListings}
+          onClearSelection={() => setSelectedListings([])}
         />
 
         <DraftsPanel />

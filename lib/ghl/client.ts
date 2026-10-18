@@ -440,3 +440,131 @@ export async function sendSms(
     raw: data,
   };
 }
+
+// ---------- Blast support: contact resolution + write-backs ----------
+
+/** Digits-only phone comparison key: strips formatting and a leading US
+ *  country code, so "(317) 555-0100", "+1 317 555 0100" and "3175550100"
+ *  all compare equal. */
+export function normalizePhoneDigits(value: string): string {
+  let digits = value.replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("1")) {
+    digits = digits.slice(1);
+  }
+  return digits;
+}
+
+/**
+ * Canonical-contact lookup by phone: HighLevel search by the digits,
+ * then an exact normalized-digit match among the results. Returns null
+ * when no contact carries that number — callers create one instead of
+ * ever duplicating a realtor.
+ */
+export async function findContactByPhone(
+  locationId: string,
+  phone: string,
+): Promise<Contact | null> {
+  const target = normalizePhoneDigits(phone);
+  if (target.length < 7) return null;
+  const qs = new URLSearchParams({ locationId, query: target });
+  const data = (await ghlFetch(`/contacts/search?${qs.toString()}`)) as {
+    contacts?: Raw[];
+  };
+  const matches = (data.contacts ?? [])
+    .map(mapContact)
+    .filter((c) => c.phone && normalizePhoneDigits(c.phone) === target);
+  return matches[0] ?? null;
+}
+
+export interface CreateContactInput {
+  locationId: string;
+  firstName?: string;
+  lastName?: string;
+  name?: string;
+  phone?: string;
+  email?: string;
+  /** GHL custom field id → value, stamped at creation (e.g. Listing Street). */
+  customFields?: { id: string; value: string }[];
+}
+
+export async function createContact(
+  input: CreateContactInput,
+): Promise<Contact> {
+  const body: Record<string, unknown> = {
+    locationId: input.locationId,
+    firstName: input.firstName,
+    lastName: input.lastName,
+    name: input.name,
+    phone: input.phone,
+    email: input.email,
+  };
+  if (input.customFields && input.customFields.length > 0) {
+    body.customFields = input.customFields.map((f) => ({
+      id: f.id,
+      field_value: f.value,
+    }));
+  }
+  const data = (await ghlFetch(`/contacts/`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  })) as { contact?: Raw };
+  const raw = data.contact ?? (data as unknown as Raw);
+  return mapContact(raw);
+}
+
+/** Add a note to a contact (used for the blast send log: date/time + the
+ *  exact text sent, per Bradley's outreach logging rule). */
+export async function addContactNote(
+  contactId: string,
+  body: string,
+): Promise<void> {
+  await ghlFetch(`/contacts/${contactId}/notes`, {
+    method: "POST",
+    body: JSON.stringify({ body }),
+  });
+}
+
+export interface CreateOpportunityInput {
+  locationId: string;
+  pipelineId: string;
+  pipelineStageId: string;
+  contactId: string;
+  name: string;
+}
+
+export async function createOpportunity(
+  input: CreateOpportunityInput,
+): Promise<GhlOpportunity> {
+  const data = (await ghlFetch(`/opportunities/`, {
+    method: "POST",
+    body: JSON.stringify({
+      locationId: input.locationId,
+      pipelineId: input.pipelineId,
+      pipelineStageId: input.pipelineStageId,
+      contactId: input.contactId,
+      name: input.name,
+      status: "open",
+    }),
+  })) as { opportunity?: Raw };
+  const raw = data.opportunity ?? (data as unknown as Raw);
+  const opp = mapOpportunity(raw);
+  if (!opp) {
+    throw new GhlApiError(502, "HighLevel created an opportunity without an id/contact.");
+  }
+  return opp;
+}
+
+/**
+ * Move an opportunity to another stage. Per the verified write-back
+ * rules: PUT /opportunities/{id} with body { pipelineStageId } —
+ * update-opportunity-status only changes open/won/lost/abandoned.
+ */
+export async function updateOpportunityStage(
+  opportunityId: string,
+  pipelineStageId: string,
+): Promise<void> {
+  await ghlFetch(`/opportunities/${opportunityId}`, {
+    method: "PUT",
+    body: JSON.stringify({ pipelineStageId }),
+  });
+}

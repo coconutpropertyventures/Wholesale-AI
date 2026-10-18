@@ -366,6 +366,39 @@ table.kv td:first-child { color: var(--ink-soft); width: 45%; }
 .inline-row input { flex: 1; }
 .search-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; margin-top: 10px; }
 .search-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: #fbfcfd; }
+
+/* ---------- Blast ---------- */
+.inline-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+.blast-pick { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; cursor: pointer; }
+.script-preview {
+  white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 13px;
+  background: #fbfcfd; border: 1px solid var(--line); border-radius: 8px;
+  padding: 10px 12px; margin: 6px 0;
+}
+.blast-runs { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+.blast-detail { margin-top: 14px; }
+.counts-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.count-chip {
+  font-size: 12px; background: #f1f3f5; border: 1px solid var(--line);
+  border-radius: 999px; padding: 2px 10px;
+}
+.blast-note { color: var(--danger); }
+.blast-table-wrap { overflow-x: auto; margin-top: 10px; }
+.blast-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.blast-table th, .blast-table td {
+  text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.blast-item-error { color: var(--danger); overflow-wrap: anywhere; }
+.badge.blast-status-approved, .badge.blast-status-sending { background: #e5f0ff; color: #0057c2; }
+.badge.blast-status-paused { background: #fff4d6; color: #7a5b00; }
+.badge.blast-status-complete { background: #e2f4e5; color: #146c2e; }
+.badge.blast-status-stopped { background: #fde8e8; color: var(--danger); }
+.badge.item-sent { background: #e2f4e5; color: #146c2e; }
+.badge.item-queued { background: #e5f0ff; color: #0057c2; }
+.badge.item-failed { background: #fde8e8; color: var(--danger); }
+.badge.item-missing_phone, .badge.item-skipped_dnd, .badge.item-skipped_suppressed,
+.badge.item-skipped_recent, .badge.item-skipped_active { background: #f1f3f5; color: var(--muted); }
 .search-card-addr { font-weight: 600; margin-bottom: 4px; }
 .search-card-meta { display: flex; gap: 8px; flex-wrap: wrap; color: var(--ink-soft); font-size: 12.5px; margin-bottom: 8px; }
 .facts-line { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }

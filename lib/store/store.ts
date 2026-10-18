@@ -19,6 +19,8 @@ import {
   DEFAULT_ORG_ID,
   type AiUsageEntry,
   type AuditEntry,
+  type BlastItem,
+  type BlastRun,
   type Draft,
   type Feed,
   type MessageOutcome,
@@ -38,6 +40,8 @@ interface StoreData {
   suppressions: Suppression[];
   messageOutcomes: MessageOutcome[];
   aiUsage: AiUsageEntry[];
+  blastRuns: BlastRun[];
+  blastItems: BlastItem[];
 }
 
 function seed(): StoreData {
@@ -54,6 +58,8 @@ function seed(): StoreData {
     suppressions: [],
     messageOutcomes: [],
     aiUsage: [],
+    blastRuns: [],
+    blastItems: [],
   };
 }
 
@@ -108,6 +114,8 @@ function load(): StoreData {
       suppressions: parsed.suppressions ?? [],
       messageOutcomes: parsed.messageOutcomes ?? [],
       aiUsage: parsed.aiUsage ?? [],
+      blastRuns: parsed.blastRuns ?? [],
+      blastItems: parsed.blastItems ?? [],
     };
   }
   cache = data;
@@ -207,6 +215,21 @@ async function bootstrapSchema(): Promise<void> {
   await p.query(`
     CREATE TABLE IF NOT EXISTS wai_ai_usage (
       id text PRIMARY KEY,
+      organization_id text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      data jsonb NOT NULL
+    )`);
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS wai_blast_runs (
+      id text PRIMARY KEY,
+      organization_id text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      data jsonb NOT NULL
+    )`);
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS wai_blast_items (
+      id text PRIMARY KEY,
+      run_id text NOT NULL,
       organization_id text NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now(),
       data jsonb NOT NULL
@@ -585,4 +608,209 @@ export async function listAiUsage(
       );
   }
   return load().aiUsage.filter((e) => e.organizationId === organizationId);
+}
+
+// ---------- Blast runs + items ----------
+
+function byCreated<T extends { createdAt: string; id: string }>(
+  rows: T[],
+): T[] {
+  return rows.sort((a, b) =>
+    a.createdAt === b.createdAt
+      ? a.id.localeCompare(b.id)
+      : a.createdAt.localeCompare(b.createdAt),
+  );
+}
+
+export interface CreateBlastRunInput {
+  source: BlastRun["source"];
+  stageRef?: { pipelineId: string; stageId: string };
+  scriptKey: BlastRun["scriptKey"];
+  dailyCap?: number;
+  organizationId?: string;
+}
+
+export async function createBlastRun(
+  input: CreateBlastRunInput,
+): Promise<BlastRun> {
+  const run: BlastRun = {
+    id: randomUUID(),
+    organizationId: input.organizationId ?? DEFAULT_ORG_ID,
+    source: input.source,
+    stageRef: input.stageRef,
+    scriptKey: input.scriptKey,
+    status: "draft",
+    dailyCap: input.dailyCap ?? 250,
+    groupSentCount: 0,
+    createdAt: new Date().toISOString(),
+  };
+  if (usePostgres()) {
+    await ensureSchema();
+    await getPool().query(
+      `INSERT INTO wai_blast_runs (id, organization_id, created_at, data)
+       VALUES ($1, $2, $3, $4)`,
+      [run.id, run.organizationId, run.createdAt, JSON.stringify(run)],
+    );
+    return run;
+  }
+  const data = load();
+  data.blastRuns.push(run);
+  save(data);
+  return run;
+}
+
+export async function getBlastRun(id: string): Promise<BlastRun | undefined> {
+  if (usePostgres()) {
+    await ensureSchema();
+    const { rows } = await getPool().query<{ data: BlastRun }>(
+      `SELECT data FROM wai_blast_runs WHERE id = $1`,
+      [id],
+    );
+    return rows[0]?.data;
+  }
+  return load().blastRuns.find((r) => r.id === id);
+}
+
+export async function listBlastRuns(
+  organizationId: string = DEFAULT_ORG_ID,
+): Promise<BlastRun[]> {
+  if (usePostgres()) {
+    await ensureSchema();
+    const { rows } = await getPool().query<{ data: BlastRun }>(
+      `SELECT data FROM wai_blast_runs WHERE organization_id = $1`,
+      [organizationId],
+    );
+    return byCreated(rows.map((r) => r.data));
+  }
+  return load().blastRuns.filter((r) => r.organizationId === organizationId);
+}
+
+export async function updateBlastRun(
+  id: string,
+  patch: Partial<Omit<BlastRun, "id" | "organizationId">>,
+): Promise<BlastRun | undefined> {
+  if (usePostgres()) {
+    await ensureSchema();
+    const existing = await getBlastRun(id);
+    if (!existing) return undefined;
+    const updated = { ...existing, ...patch };
+    await getPool().query(`UPDATE wai_blast_runs SET data = $2 WHERE id = $1`, [
+      id,
+      JSON.stringify(updated),
+    ]);
+    return updated;
+  }
+  const data = load();
+  const idx = data.blastRuns.findIndex((r) => r.id === id);
+  if (idx === -1) return undefined;
+  data.blastRuns[idx] = { ...data.blastRuns[idx], ...patch };
+  save(data);
+  return data.blastRuns[idx];
+}
+
+export interface CreateBlastItemInput {
+  runId: string;
+  contactId?: string;
+  contactName?: string;
+  firstName?: string;
+  opportunityId?: string;
+  street: string;
+  phone?: string;
+  status: BlastItem["status"];
+  error?: string;
+  organizationId?: string;
+}
+
+export async function createBlastItems(
+  inputs: CreateBlastItemInput[],
+): Promise<BlastItem[]> {
+  const now = new Date().toISOString();
+  const items: BlastItem[] = inputs.map((input) => ({
+    id: randomUUID(),
+    organizationId: input.organizationId ?? DEFAULT_ORG_ID,
+    runId: input.runId,
+    contactId: input.contactId,
+    contactName: input.contactName,
+    firstName: input.firstName,
+    opportunityId: input.opportunityId,
+    street: input.street,
+    phone: input.phone,
+    status: input.status,
+    error: input.error,
+    createdAt: now,
+  }));
+  if (usePostgres()) {
+    await ensureSchema();
+    for (const item of items) {
+      await getPool().query(
+        `INSERT INTO wai_blast_items (id, run_id, organization_id, created_at, data)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [
+          item.id,
+          item.runId,
+          item.organizationId,
+          item.createdAt,
+          JSON.stringify(item),
+        ],
+      );
+    }
+    return items;
+  }
+  const data = load();
+  data.blastItems.push(...items);
+  save(data);
+  return items;
+}
+
+export async function listBlastItems(runId: string): Promise<BlastItem[]> {
+  if (usePostgres()) {
+    await ensureSchema();
+    const { rows } = await getPool().query<{ data: BlastItem }>(
+      `SELECT data FROM wai_blast_items WHERE run_id = $1`,
+      [runId],
+    );
+    return byCreated(rows.map((r) => r.data));
+  }
+  return load().blastItems.filter((i) => i.runId === runId);
+}
+
+export async function listAllBlastItems(
+  organizationId: string = DEFAULT_ORG_ID,
+): Promise<BlastItem[]> {
+  if (usePostgres()) {
+    await ensureSchema();
+    const { rows } = await getPool().query<{ data: BlastItem }>(
+      `SELECT data FROM wai_blast_items WHERE organization_id = $1`,
+      [organizationId],
+    );
+    return byCreated(rows.map((r) => r.data));
+  }
+  return load().blastItems.filter((i) => i.organizationId === organizationId);
+}
+
+export async function updateBlastItem(
+  id: string,
+  patch: Partial<Omit<BlastItem, "id" | "organizationId" | "runId">>,
+): Promise<BlastItem | undefined> {
+  if (usePostgres()) {
+    await ensureSchema();
+    const { rows } = await getPool().query<{ data: BlastItem }>(
+      `SELECT data FROM wai_blast_items WHERE id = $1`,
+      [id],
+    );
+    const existing = rows[0]?.data;
+    if (!existing) return undefined;
+    const updated = { ...existing, ...patch };
+    await getPool().query(`UPDATE wai_blast_items SET data = $2 WHERE id = $1`, [
+      id,
+      JSON.stringify(updated),
+    ]);
+    return updated;
+  }
+  const data = load();
+  const idx = data.blastItems.findIndex((i) => i.id === id);
+  if (idx === -1) return undefined;
+  data.blastItems[idx] = { ...data.blastItems[idx], ...patch };
+  save(data);
+  return data.blastItems[idx];
 }

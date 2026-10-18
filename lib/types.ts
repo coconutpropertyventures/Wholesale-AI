@@ -104,3 +104,69 @@ export interface AiUsageEntry {
   purpose: string;              // e.g. "draft-offer"
   createdAt: string;
 }
+
+// ---------- Blast (paced bulk outreach to listing agents) ----------
+
+export type BlastSource = "search" | "stage";
+export type BlastScriptKey = "turnkey_opener" | "distressed_opener";
+export type BlastRunStatus =
+  | "draft"
+  | "approved"
+  | "sending"
+  | "paused"
+  | "stopped"
+  | "complete";
+
+/**
+ * Item lifecycle: build-time exclusions land in a skipped_* status with
+ * the reason in `error`; only "queued" items can ever send. A confirmed
+ * send is "sent"; a send-time DND/suppression skip is "skipped_dnd";
+ * any other send failure is "failed" and pauses the run (fail-stop).
+ */
+export type BlastItemStatus =
+  | "queued"
+  | "sending"
+  | "sent"
+  | "skipped_dnd"
+  | "skipped_suppressed"
+  | "skipped_recent"
+  | "skipped_active"
+  | "missing_phone"
+  | "failed";
+
+export interface BlastRun {
+  id: string;
+  organizationId: string;
+  source: BlastSource;
+  /** Pipeline stage the queue was built from (source "stage" only). */
+  stageRef?: { pipelineId: string; stageId: string };
+  scriptKey: BlastScriptKey;
+  status: BlastRunStatus;
+  dailyCap: number;
+  lastSentAt?: string;
+  currentGroupStartedAt?: string;
+  groupSentCount: number;
+  /** Last notable event for the UI (e.g. "daily cap reached", fail-stop error). */
+  note?: string;
+  createdAt: string;
+  startedAt?: string;
+}
+
+export interface BlastItem {
+  id: string;
+  organizationId: string;
+  runId: string;
+  /** Absent only for search-source items whose agent phone never resolved. */
+  contactId?: string;
+  contactName?: string;
+  firstName?: string;
+  opportunityId?: string;
+  street: string;
+  phone?: string;
+  status: BlastItemStatus;
+  ghlMessageId?: string;
+  /** Exclusion reason, skip detail, or send error — human-readable. */
+  error?: string;
+  sentAt?: string;
+  createdAt: string;
+}

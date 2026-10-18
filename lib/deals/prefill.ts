@@ -18,6 +18,13 @@ export interface DealPrefill {
   rentEstimate?: number;
   daysOnMarket?: number;
   sourceUrl?: string;
+  /** Listing agent details, when the Actor's detail data carries them.
+   *  Read defensively from many candidate keys; absent stays absent —
+   *  the blast queue treats a missing phone as "missing_phone" and
+   *  never invents one. */
+  agentName?: string;
+  agentPhone?: string;
+  agentEmail?: string;
   source: "zillow" | "redfin" | "apify" | "rentcast";
 }
 
@@ -99,10 +106,38 @@ function extractAddress(row: Raw): {
   return { address: flat, city, state, zip };
 }
 
+/** Agent details may sit at the top level or under an agent/listingAgent object. */
+function extractAgent(row: Raw): {
+  agentName?: string;
+  agentPhone?: string;
+  agentEmail?: string;
+} {
+  const agentObj = asRecord(row.agent) ?? asRecord(row.listingAgent) ?? {};
+  const name =
+    firstStr(row, [
+      "agentName",
+      "listingAgentName",
+      "listingAgent",
+      "agent",
+    ]) ?? firstStr(agentObj, ["name", "agentName", "fullName"]);
+  const phone =
+    firstStr(row, [
+      "agentPhone",
+      "listingAgentPhone",
+      "agentPhoneNumber",
+      "phone",
+    ]) ?? firstStr(agentObj, ["phone", "phoneNumber", "mobile"]);
+  const email =
+    firstStr(row, ["agentEmail", "listingAgentEmail", "email"]) ??
+    firstStr(agentObj, ["email", "emailAddress"]);
+  return { agentName: name, agentPhone: phone, agentEmail: email };
+}
+
 function baseFromRow(row: Raw, source: DealPrefill["source"]): DealPrefill {
   const addr = extractAddress(row);
   return {
     ...addr,
+    ...extractAgent(row),
     listPrice: firstNum(row, [
       "price",
       "listPrice",

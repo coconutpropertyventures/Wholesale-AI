@@ -144,6 +144,61 @@ stated openly.
   back to the template and says why. The Drafts panel header shows the
   month's estimated AI spend against the budget.
 
+## Blast — texting listing agents at scale
+
+The Blast panel (below the inbox) texts listing agents from the
+HighLevel number using Bradley's two approved opener scripts
+(`lib/comms/scripts.ts`, sent verbatim with `{first}`/`{street}`
+personalization — no other text, no AI rewriting in this path).
+
+**Building a queue.** The primary source is the workbench: check "Add to
+blast" on Zillow/Redfin result cards, then Build queue. Each selected
+property's listing agent is resolved from the cached property detail;
+the agent's HighLevel contact is created or found by phone (canonical
+per realtor — search by phone first; on create the Listing Street
+custom field is stamped), and an opportunity is created in Pre-Screening
+· New Prospect when the contact has none for that street. A pipeline
+stage is the secondary source (every contact holding an open opportunity
+in that stage). Build-time exclusions, each counted in the preview: no
+phone on file (`missing_phone` — a phone is never invented), contact on
+the suppression list, contact+street already in a live run, and
+contact+street already sent via this app within 30 days.
+
+**The rails (all enforced server-side in `lib/blast/pacing.ts` and the
+shared engine `stepBlastRun` in `lib/blast/service.ts`):**
+
+- **Approval gate:** building a run sends nothing. Bradley's "Approve &
+  start" click is the only thing that makes a run sendable.
+- **Pacing:** at least 45s between sends (the engine targets a ~50s
+  cadence), in groups of 10 followed by a 180s pause. `POST
+  /api/blast/runs/[id]/step` sends at most one item and refuses early
+  calls with the wait time.
+- **Daily cap:** per run, default 250 sends/day (America/New_York);
+  a capped run reports "daily cap reached".
+- **DND skip-and-continue:** sends go through the single gated path
+  (`lib/comms/send.ts` — suppression check + live HighLevel DND
+  re-check). A DND/suppression result marks the item `skipped_dnd` and
+  the run continues.
+- **Fail-stop:** any other send failure marks the item `failed` and
+  auto-pauses the run with the error on it. Nothing else sends until
+  Bradley re-approves.
+- **Confirmed-send write-backs only:** on a confirmed send, a note with
+  the date/time and the exact text sent is added to the agent's contact,
+  and that property's opportunity moves to the Contacted stage. Never
+  pre-marked.
+
+**Background driver.** Approved runs do not need this tab open: they are
+advanced by `POST /api/blast/tick`, which steps every approved/sending
+run by at most one due item. The panel only polls status (~15s) to
+display progress. There is deliberately **no `vercel.json` cron** — on
+Vercel's Hobby plan, built-in cron runs at most once a day, so a minutely
+cron block would silently not work. An external scheduler must POST
+`/api/blast/tick` about once a minute: options are Vercel Pro cron, a
+free external scheduler (cron-job.org, Upstash QStash), or Muse's
+scheduler as the interim driver. When `BLAST_TICK_SECRET` is set, the
+tick requires it in the `x-blast-secret` header — production should
+always set it.
+
 ## Not yet wired (honest stubs, labeled in the UI)
 
 - Google Voice: removed from the UI entirely (no inbox tab, no header
