@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { mapApifyRow, mapRedfinRow, unwrap } from "../lib/deals/prefill";
+import {
+  mapApifyRow,
+  mapRedfinDetailRow,
+  mapRedfinRow,
+  unwrap,
+} from "../lib/deals/prefill";
 
 // tri_angle/redfin-search returns Redfin's NATIVE row shape: scalar
 // fields wrapped as { value: X, level: n } (price, streetLine, sqFt,
@@ -157,5 +162,111 @@ describe("mapApifyRow flat-row regression (maxcopell Zillow shape)", () => {
     const p = mapApifyRow({ price: "$154,900", livingArea: "1,450 sqft" });
     expect(p.listPrice).toBe(154900);
     expect(p.sqft).toBe(1450);
+  });
+});
+
+// memo23/apify-redfin-cheerio dumps the whole Redfin detail page.
+// The fixture mirrors the verified live row for 225 N New Jersey St
+// (dataset AaApW7NmuBmfM6neq, 2026-10-18): the listing agent lives in
+// the MLS disclaimer block, surrounded by Redfin's OWN agents
+// (askAgent / recommendedAgent / offerInsights) who must never be
+// picked up, and empty row-level contact fields.
+const MEMO23_DETAIL_ROW = {
+  url: "https://www.redfin.com/IN/Indianapolis/225-N-New-Jersey-St-46204/unit-27/home/199882420",
+  streetAddress: "225 N New Jersey St #27",
+  city: "Indianapolis",
+  stateOrProvinceCode: "IN",
+  postalCode: "46204",
+  primaryListingAgentName: "Timothy Birky",
+  primaryListingAgentFirstName: "Timothy",
+  primaryListingAgentLastName: "Birky",
+  mlsDisclaimerInfo: {
+    listingAgentName: "Timothy Birky",
+    listingAgentNumber: "317-550-0700",
+    listingBrokerName: "F.C. Tucker Company",
+    listingBrokerNumber: "317-843-7766",
+  },
+  mainHouseInfo: {
+    listingAgents: [
+      {
+        agentInfo: { agentName: "Timothy Birky", fullName: "Timothy Birky" },
+        brokerName: "F.C. Tucker Company",
+      },
+      {
+        agentInfo: { agentName: "Nicholas McNeely", fullName: "Nicholas McNeely" },
+        brokerName: "F.C. Tucker Company",
+      },
+    ],
+  },
+  // Decoys — Redfin's touring / partner agents, NOT the listing agent.
+  askAgent: {
+    agent: { name: "Craig McLaurin", first_name: "Craig", last_name: "McLaurin" },
+    phoneNumber: "(317) 854-4904",
+    profilePhoneNumber: "(317) 743-3137",
+  },
+  askAgentFullName: "Craig McLaurin",
+  recommendedAgent: { phoneNumber: "317-625-2649", brokerageName: "Redfin" },
+  offerInsights: {
+    sections: [{ agentInfoDisplay: { agentName: "Dru Cornett" } }],
+  },
+  contactName: "",
+  contactPhone: "",
+  contactEmail: "",
+};
+
+describe("mapRedfinDetailRow (memo23 Redfin detail)", () => {
+  it("reads the listing agent from the MLS disclaimer block", () => {
+    const d = mapRedfinDetailRow(MEMO23_DETAIL_ROW);
+    expect(d.agentName).toBe("Timothy Birky");
+    expect(d.agentPhone).toBe("317-550-0700");
+    expect(d.agentBrokerage).toBe("F.C. Tucker Company");
+  });
+
+  it("never maps Redfin's own agents or the broker office line", () => {
+    const d = mapRedfinDetailRow(MEMO23_DETAIL_ROW);
+    expect(d.agentName).not.toBe("Craig McLaurin");
+    expect(d.agentName).not.toBe("Dru Cornett");
+    expect(d.agentPhone).not.toBe("317-843-7766"); // broker office number
+    expect(d.agentPhone).not.toBe("(317) 854-4904"); // askAgent (Redfin)
+    expect(d.agentPhone).not.toBe("317-625-2649"); // recommendedAgent (Redfin)
+  });
+
+  it("composes the address and carries the listing URL", () => {
+    const d = mapRedfinDetailRow(MEMO23_DETAIL_ROW);
+    expect(d.address).toBe("225 N New Jersey St #27, Indianapolis, IN 46204");
+    expect(d.sourceUrl).toBe(MEMO23_DETAIL_ROW.url);
+  });
+
+  it("falls back to primaryListingAgentName, then mainHouseInfo, for the name", () => {
+    const noDisclaimer = { ...MEMO23_DETAIL_ROW, mlsDisclaimerInfo: undefined };
+    expect(mapRedfinDetailRow(noDisclaimer).agentName).toBe("Timothy Birky");
+    const onlyMainHouse = {
+      mainHouseInfo: MEMO23_DETAIL_ROW.mainHouseInfo,
+    };
+    expect(mapRedfinDetailRow(onlyMainHouse).agentName).toBe("Timothy Birky");
+  });
+
+  it("yields no phone when listingAgentNumber is absent — the broker number is not a substitute", () => {
+    const d = mapRedfinDetailRow({
+      mlsDisclaimerInfo: {
+        listingAgentName: "No Phone Nancy",
+        listingBrokerName: "Some Broker LLC",
+        listingBrokerNumber: "317-843-7766",
+      },
+      primaryListingAgentName: "No Phone Nancy",
+    });
+    expect(d.agentName).toBe("No Phone Nancy");
+    expect(d.agentPhone).toBeUndefined();
+    expect(d.agentBrokerage).toBe("Some Broker LLC");
+  });
+
+  it("returns an empty detail for an empty row", () => {
+    expect(mapRedfinDetailRow({})).toEqual({
+      agentName: undefined,
+      agentPhone: undefined,
+      agentBrokerage: undefined,
+      address: undefined,
+      sourceUrl: undefined,
+    });
   });
 });

@@ -718,6 +718,8 @@ export interface CreateBlastItemInput {
   firstName?: string;
   opportunityId?: string;
   street: string;
+  address?: string;
+  sourceUrl?: string;
   phone?: string;
   status: BlastItem["status"];
   error?: string;
@@ -737,6 +739,8 @@ export async function createBlastItems(
     firstName: input.firstName,
     opportunityId: input.opportunityId,
     street: input.street,
+    address: input.address,
+    sourceUrl: input.sourceUrl,
     phone: input.phone,
     status: input.status,
     error: input.error,

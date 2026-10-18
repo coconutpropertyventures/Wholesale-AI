@@ -24,6 +24,17 @@ export function redfinActorId(): string {
   return process.env.APIFY_REDFIN_ACTOR?.trim() || "tri_angle/redfin-search";
 }
 
+/** Redfin listing DETAIL Actor (agent lookup for blast enrichment).
+ *  memo23's schema takes `startUrls` as plain URL STRINGS — {url}
+ *  objects fail its validation (verified live, 2026-10-18). A run
+ *  costs roughly $0.009 per property pulled. */
+export function redfinDetailActorId(): string {
+  return (
+    process.env.APIFY_REDFIN_DETAIL_ACTOR?.trim() ||
+    "memo23/apify-redfin-cheerio"
+  );
+}
+
 type RawRow = Record<string, unknown>;
 
 /**
@@ -109,4 +120,109 @@ export async function searchRedfin(query: string): Promise<DealPrefill[]> {
     zoomIn: true,
   });
   return rows.map(mapRedfinRow).filter((p) => p.address || p.listPrice);
+}
+
+// ---------- Async runs (start / poll / fetch) ----------
+//
+// The Redfin detail Actor takes ~50s for one property — far too slow
+// for run-sync inside a web request (Vercel kills the function first).
+// Callers with slow Actors use the async REST lifecycle instead:
+// start the run, poll its status in short requests, then read the
+// dataset once it succeeds. The blast enrichment step machine
+// (lib/blast/service.ts) is built on these three helpers.
+
+const ASYNC_CALL_TIMEOUT_MS = 30_000;
+
+export interface ActorRunRef {
+  runId: string;
+  /** Apify run status: READY | RUNNING | SUCCEEDED | FAILED |
+   *  TIMED-OUT | ABORTED (plus transient ABORTING / TIMING-OUT). */
+  status: string;
+  datasetId?: string;
+}
+
+function requireToken(): string {
+  const token = process.env.APIFY_TOKEN?.trim();
+  if (!token) throw new Error("Apify is not configured: APIFY_TOKEN is not set.");
+  return token;
+}
+
+async function apifyFetch(
+  path: string,
+  init?: RequestInit,
+): Promise<Record<string, unknown>> {
+  const token = requireToken();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ASYNC_CALL_TIMEOUT_MS);
+  try {
+    const res = await fetch(
+      `${APIFY_BASE}${path}${path.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`,
+      { ...init, signal: controller.signal, cache: "no-store" },
+    );
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`Apify request failed (${res.status}): ${text.slice(0, 200)}`);
+    }
+    const parsed: unknown = text ? JSON.parse(text) : {};
+    return (parsed ?? {}) as Record<string, unknown>;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function runRefFrom(payload: Record<string, unknown>): ActorRunRef {
+  const data = (payload.data ?? payload) as Record<string, unknown>;
+  return {
+    runId: String(data.id ?? ""),
+    status: String(data.status ?? ""),
+    datasetId:
+      typeof data.defaultDatasetId === "string"
+        ? data.defaultDatasetId
+        : undefined,
+  };
+}
+
+/** Start an Actor run without waiting for it. POST /v2/acts/{id}/runs. */
+export async function startActorRun(
+  actorId: string,
+  input: Record<string, unknown>,
+): Promise<ActorRunRef> {
+  const pathId = actorId.replace("/", "~");
+  const payload = await apifyFetch(`/acts/${pathId}/runs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const ref = runRefFrom(payload);
+  if (!ref.runId) throw new Error("Apify did not return a run id.");
+  return ref;
+}
+
+/** Poll one run's status. GET /v2/actor-runs/{id}. */
+export async function getActorRun(runId: string): Promise<ActorRunRef> {
+  const payload = await apifyFetch(`/actor-runs/${encodeURIComponent(runId)}`);
+  return runRefFrom(payload);
+}
+
+/** Read a finished run's dataset rows. GET /v2/datasets/{id}/items. */
+export async function getDatasetItems(datasetId: string): Promise<RawRow[]> {
+  const token = requireToken();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ASYNC_CALL_TIMEOUT_MS);
+  try {
+    const res = await fetch(
+      `${APIFY_BASE}/datasets/${encodeURIComponent(datasetId)}/items?token=${encodeURIComponent(token)}`,
+      { signal: controller.signal, cache: "no-store" },
+    );
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(
+        `Apify dataset read failed (${res.status}): ${text.slice(0, 200)}`,
+      );
+    }
+    const parsed: unknown = text ? JSON.parse(text) : [];
+    return Array.isArray(parsed) ? (parsed as RawRow[]) : [];
+  } finally {
+    clearTimeout(timer);
+  }
 }

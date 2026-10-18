@@ -561,6 +561,7 @@ export interface BlastItemData {
 
 export interface BlastCountsData {
   total: number;
+  enriching: number;
   queued: number;
   sending: number;
   sent: number;
@@ -578,6 +579,9 @@ export interface BlastRunDetailData {
   counts: BlastCountsData;
   sentToday: number;
   outcome?: Record<string, unknown>;
+  /** Enrich step responses carry the step machine's phase
+   *  (started / running / applied / failed / idle). */
+  phase?: string;
 }
 
 function numOr(v: unknown, fallback: number): number {
@@ -632,6 +636,7 @@ function normalizeBlastCounts(v: unknown): BlastCountsData {
   const r = asRecord(v);
   return {
     total: numOr(r?.total, 0),
+    enriching: numOr(r?.enriching, 0),
     queued: numOr(r?.queued, 0),
     sending: numOr(r?.sending, 0),
     sent: numOr(r?.sent, 0),
@@ -656,6 +661,7 @@ function normalizeBlastDetail(raw: unknown): BlastRunDetailData | null {
     counts: normalizeBlastCounts(rec?.counts),
     sentToday: numOr(rec?.sentToday, 0),
     outcome: asRecord(rec?.outcome) ?? undefined,
+    phase: str(rec?.phase),
   };
 }
 
@@ -736,6 +742,18 @@ export async function blastRunAction(
   const raw = await postJsonOrThrow(`/api/blast/runs/${id}/${action}`);
   const detail = normalizeBlastDetail(raw);
   if (!detail) throw new Error(`Blast ${action} returned no run.`);
+  return detail;
+}
+
+/** Advance the agent-lookup enrichment by one step (start / poll /
+ *  apply the Redfin detail pull). The panel polls this while the
+ *  open run has items in "enriching"; each call is one short step. */
+export async function enrichBlastRun(
+  id: string,
+): Promise<BlastRunDetailData> {
+  const raw = await postJsonOrThrow(`/api/blast/runs/${id}/enrich`);
+  const detail = normalizeBlastDetail(raw);
+  if (!detail) throw new Error("Blast enrich returned no run.");
   return detail;
 }
 

@@ -33,6 +33,9 @@ export interface DealPrefill {
   agentName?: string;
   agentPhone?: string;
   agentEmail?: string;
+  /** Listing brokerage (e.g. "F.C. Tucker Company") when a detail
+   *  source reports one. Context only — never dialed. */
+  agentBrokerage?: string;
   source: "zillow" | "redfin" | "apify" | "rentcast";
 }
 
@@ -228,4 +231,68 @@ export function mapRedfinRow(row: Raw): DealPrefill {
   ]);
   out.rentEstimate = firstNum(row, ["rentEstimate", "rentZestimate"]);
   return out;
+}
+
+// ---------- Redfin DETAIL rows (memo23/apify-redfin-cheerio) ----------
+
+/**
+ * What the blast agent lookup takes from one Redfin listing DETAIL row.
+ * The detail Actor dumps the whole Redfin page payload, which is full
+ * of agent-shaped decoys — this mapper reads ONLY the MLS attribution
+ * block, verified live on 2026-10-18 (225 N New Jersey St,
+ * Indianapolis; dataset AaApW7NmuBmfM6neq):
+ *
+ *   mlsDisclaimerInfo.listingAgentName   "Timothy Birky"  — the agent
+ *   mlsDisclaimerInfo.listingAgentNumber "317-550-0700"   — his number
+ *   mlsDisclaimerInfo.listingBrokerName  "F.C. Tucker Company"
+ *
+ * Corroboration/fallback for the NAME only: `primaryListingAgentName`,
+ * then mainHouseInfo.listingAgents[0].agentInfo.agentName.
+ *
+ * NEVER mapped as the listing agent: `askAgent.*`, `recommendedAgent.*`
+ * and `offerInsights.*.agentInfoDisplay` are Redfin's OWN touring /
+ * partner agents — different people who do not hold the listing. The
+ * row-level `contactPhone`/`contactEmail` are empty strings on real
+ * rows. The phone comes from `listingAgentNumber` ONLY: the broker
+ * number (`listingBrokerNumber`) is an office line and is never
+ * substituted — no agent number means no phone, full stop.
+ */
+export interface RedfinDetail {
+  agentName?: string;
+  /** The listing agent's own number (mlsDisclaimerInfo.listingAgentNumber). */
+  agentPhone?: string;
+  agentBrokerage?: string;
+  /** Full address composed from the row's address fields, when present. */
+  address?: string;
+  /** The Redfin listing URL the detail page was pulled for (row.url). */
+  sourceUrl?: string;
+}
+
+export function mapRedfinDetailRow(row: Raw): RedfinDetail {
+  const disclaimerName = firstStr(row, ["mlsDisclaimerInfo.listingAgentName"]);
+  let fallbackName = firstStr(row, ["primaryListingAgentName"]);
+  if (!fallbackName) {
+    const mainHouse = asRecord(row.mainHouseInfo);
+    const agents = Array.isArray(mainHouse?.listingAgents)
+      ? mainHouse.listingAgents
+      : [];
+    const first = agents.length > 0 ? asRecord(agents[0]) : null;
+    const info = first ? asRecord(first.agentInfo) : null;
+    if (info) {
+      fallbackName = firstStr(info, ["agentName", "fullName"]);
+    }
+  }
+  const street = firstStr(row, ["streetAddress", "streetLine"]);
+  const city = firstStr(row, ["city", "cityName"]);
+  const state = firstStr(row, ["state", "stateOrProvinceCode"]);
+  const zip = firstStr(row, ["zip", "postalCode", "zipcode", "zipCode"]);
+  const parts = [street, city, state].filter(Boolean).join(", ");
+  const address = parts ? (zip ? `${parts} ${zip}` : parts) : undefined;
+  return {
+    agentName: disclaimerName ?? fallbackName,
+    agentPhone: firstStr(row, ["mlsDisclaimerInfo.listingAgentNumber"]),
+    agentBrokerage: firstStr(row, ["mlsDisclaimerInfo.listingBrokerName"]),
+    address,
+    sourceUrl: firstStr(row, ["url"]),
+  };
 }

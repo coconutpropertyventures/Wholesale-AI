@@ -125,8 +125,13 @@ export type BlastRunStatus =
  * the reason in `error`; only "queued" items can ever send. A confirmed
  * send is "sent"; a send-time DND/suppression skip is "skipped_dnd";
  * any other send failure is "failed" and pauses the run (fail-stop).
+ * Workbench items whose property has a listing URL but no agent phone
+ * start as "enriching" while the Redfin detail lookup runs; they
+ * resolve to "queued" (or an exclusion) or fall back to
+ * "missing_phone" — a run cannot be approved while any item enriches.
  */
 export type BlastItemStatus =
+  | "enriching"
   | "queued"
   | "sending"
   | "sent"
@@ -153,6 +158,13 @@ export interface BlastRun {
   note?: string;
   createdAt: string;
   startedAt?: string;
+  /** Agent-lookup enrichment in flight (workbench items whose cached
+   *  property had no agent phone): the Apify detail run pulling Redfin
+   *  listing pages for the run's "enriching" items. Both fields are
+   *  set while a detail run is outstanding and cleared when its rows
+   *  have been applied (or the run failed). */
+  enrichRunId?: string;
+  enrichDatasetId?: string;
 }
 
 export interface BlastItem {
@@ -165,6 +177,12 @@ export interface BlastItem {
   firstName?: string;
   opportunityId?: string;
   street: string;
+  /** Full property address + Redfin/Zillow listing URL when the queue
+   *  was built from the workbench — the agent-lookup enrichment matches
+   *  detail rows back to items by URL (address as fallback) and merges
+   *  the enriched record into the property cache under this address. */
+  address?: string;
+  sourceUrl?: string;
   phone?: string;
   status: BlastItemStatus;
   ghlMessageId?: string;

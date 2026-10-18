@@ -12,6 +12,7 @@ import type { DealPrefill } from "@/lib/deals/prefill";
 import {
   blastRunAction,
   createBlastRun,
+  enrichBlastRun,
   fetchBlastRun,
   fetchBlastRuns,
   fmtDate,
@@ -27,6 +28,7 @@ const SCRIPTS = [
 ] as const;
 
 const ITEM_LABELS: Record<string, string> = {
+  enriching: "Looking up agent…",
   queued: "Ready",
   sending: "Sending…",
   sent: "Sent",
@@ -69,6 +71,7 @@ export default function BlastPanel({
   const [detail, setDetail] = useState<BlastRunDetailData | null>(null);
   const [building, setBuilding] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [enrichPhase, setEnrichPhase] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const detailIdRef = useRef<string | null>(null);
@@ -146,6 +149,36 @@ export default function BlastPanel({
     }, 15000);
     return () => clearInterval(t);
   }, [detailStatus, refreshDetail, refreshRuns]);
+
+  // Agent lookup: while the open run has items still enriching, poll
+  // the enrich step (~10s). Each call advances the server-side step
+  // machine by one short step (start / poll / apply the detail pull) —
+  // this is not a sending loop, and it stops the moment no items are
+  // left enriching. When the last lookup lands, the run's counts
+  // update in place and Approve unlocks.
+  const enrichingCount = detail?.counts.enriching ?? 0;
+  useEffect(() => {
+    if (!detail || enrichingCount === 0) return;
+    const id = detail.run.id;
+    let cancelled = false;
+    const step = async () => {
+      try {
+        const next = await enrichBlastRun(id);
+        if (cancelled || detailIdRef.current !== id) return;
+        setDetail(next);
+        if (next.phase) setEnrichPhase(next.phase);
+        void refreshRuns();
+      } catch {
+        // best-effort; the next poll retries
+      }
+    };
+    void step();
+    const t = setInterval(() => void step(), 10000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [detail?.run.id, enrichingCount, refreshRuns]);
 
   const stageOptions = PIPELINE_DEFS.map((p) => ({
     pipeline: p,
@@ -268,7 +301,7 @@ export default function BlastPanel({
           <div className="field full">
             <span className="small">
               {selectedListings.length === 0
-                ? "No properties selected — check “Add to blast” on Zillow/Redfin result cards in the workbench above. The listing agent is resolved from the property detail; no phone on file means the property is queued as “No phone” and never sent."
+                ? "No properties selected — check “Add to blast” on Zillow/Redfin result cards in the workbench above. The listing agent is resolved from the cached property detail; when only a listing link is known, an agent lookup pulls the detail page to find the agent's number before the property can be queued."
                 : selectedListings
                     .map((p) => p.address ?? "Unknown address")
                     .join(" · ")}
@@ -370,6 +403,11 @@ export default function BlastPanel({
         <div className="blast-detail">
           <div className="counts-row">
             <span className="count-chip">Ready {counts.queued}</span>
+            {counts.enriching > 0 && (
+              <span className="count-chip">
+                Looking up agents {counts.enriching}
+              </span>
+            )}
             <span className="count-chip">Sent {counts.sent}</span>
             <span className="count-chip">No phone {counts.noPhone}</span>
             <span className="count-chip">Suppressed {counts.suppressed}</span>
@@ -382,6 +420,16 @@ export default function BlastPanel({
             </span>
           </div>
           {run.note && <p className="small blast-note">{run.note}</p>}
+          {counts.enriching > 0 && (
+            <p className="small">
+              Looking up listing agents… ({counts.enriching} pending
+              {enrichPhase ? ` — ${enrichPhase}` : ""}). Redfin search
+              results carry no agent contacts, so each property&apos;s
+              listing detail is being pulled to find the agent&apos;s
+              direct number (~1¢ per property). This run can&apos;t be
+              approved until every lookup resolves.
+            </p>
+          )}
           {run.lastSentAt && (
             <p className="small">Last sent: {fmtDate(run.lastSentAt)}</p>
           )}
@@ -391,9 +439,13 @@ export default function BlastPanel({
                 type="button"
                 className="btn primary"
                 onClick={() => void act("approve")}
-                disabled={busy !== null}
+                disabled={busy !== null || counts.enriching > 0}
               >
-                {run.status === "paused" ? "Approve & resume" : "Approve & start"}
+                {counts.enriching > 0
+                  ? "Waiting for agent lookup…"
+                  : run.status === "paused"
+                    ? "Approve & resume"
+                    : "Approve & start"}
               </button>
             )}
             {(run.status === "approved" || run.status === "sending") && (

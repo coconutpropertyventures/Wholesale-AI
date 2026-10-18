@@ -19,8 +19,19 @@ import {
   type GhlOpportunity,
 } from "@/lib/ghl/client";
 import { PRE_SCREENING_ID } from "@/lib/ghl/pipelineMap";
-import { getCachedPrefill } from "@/lib/deals/cache";
-import type { DealPrefill } from "@/lib/deals/prefill";
+import { cacheKey, getCachedPrefill, putCachedPrefill } from "@/lib/deals/cache";
+import {
+  mapRedfinDetailRow,
+  type DealPrefill,
+  type RedfinDetail,
+} from "@/lib/deals/prefill";
+import {
+  apifyConfigured,
+  getActorRun,
+  getDatasetItems,
+  redfinDetailActorId,
+  startActorRun,
+} from "@/lib/apify/client";
 import { sendApprovedDraft } from "@/lib/comms/send";
 import {
   addAudit,
@@ -44,7 +55,9 @@ import {
   personalizedBody,
   planBlastItems,
   streetFromListingName,
+  streetKey,
   type BlastCandidate,
+  type BlastPlanContext,
 } from "@/lib/blast/build";
 import {
   afterSend,
@@ -83,6 +96,7 @@ export class BlastError extends Error {
 
 export interface BlastCounts {
   total: number;
+  enriching: number;
   queued: number;
   sending: number;
   sent: number;
@@ -97,6 +111,7 @@ export interface BlastCounts {
 export function blastCounts(items: BlastItem[]): BlastCounts {
   const counts: BlastCounts = {
     total: items.length,
+    enriching: 0,
     queued: 0,
     sending: 0,
     sent: 0,
@@ -109,6 +124,7 @@ export function blastCounts(items: BlastItem[]): BlastCounts {
   };
   for (const item of items) {
     switch (item.status) {
+      case "enriching": counts.enriching += 1; break;
       case "queued": counts.queued += 1; break;
       case "sending": counts.sending += 1; break;
       case "sent": counts.sent += 1; break;
@@ -187,38 +203,20 @@ function firstNameOf(name?: string, firstName?: string): string | undefined {
   return word && word.length > 0 ? word : undefined;
 }
 
-export interface BuildBlastRunInput {
-  source: BlastSource;
-  stageRef?: { pipelineId: string; stageId: string };
-  properties?: DealPrefill[];
-  scriptKey: BlastScriptKey;
-  dailyCap?: number;
-  /**
-   * Skip the review step: create the run already approved so the
-   * background engine starts it on the next tick. Used ONLY by the
-   * workbench's "Send to all" button — that click is Bradley's
-   * explicit send instruction for the visible list. All engine
-   * exclusions (no phone, DND, suppressed, recently contacted) and
-   * pacing rails still apply unchanged.
-   */
-  autoApprove?: boolean;
+// ---------- Shared build context + agent resolution ----------
+
+/** The pure-plan context (suppression / active / recent sets) plus the
+ *  open opportunities both queue building and enrichment resolution
+ *  work against. Loaded fresh by each operation so exclusions always
+ *  reflect the latest store state. */
+interface PlanContextBundle {
+  planCtx: BlastPlanContext;
+  openOpps: GhlOpportunity[];
 }
 
-export async function buildBlastRun(
-  input: BuildBlastRunInput,
-): Promise<BlastRunDetail> {
-  if (!ghlConfigured()) {
-    throw new BlastError(
-      "not_configured",
-      "GoHighLevel is not configured (GHL_PRIVATE_TOKEN missing).",
-    );
-  }
-  const locationId = ghlLocationId();
-  if (!locationId) {
-    throw new BlastError("not_configured", "GHL_LOCATION_ID is not set.");
-  }
-
-  // ----- Exclusion context (suppression list, live runs, 30-day history) --
+async function loadPlanContext(
+  locationId: string,
+): Promise<PlanContextBundle> {
   const [suppressions, allRuns, allItems, outcomes, openOpps] =
     await Promise.all([
       listSuppressions(),
@@ -266,10 +264,133 @@ export async function buildBlastRun(
       );
     }
   }
+  return {
+    planCtx: { suppressedPhones, activeKeys, recentKeys },
+    openOpps,
+  };
+}
+
+/** Open opportunities indexed by contact+street pair. */
+function buildOppByPair(
+  openOpps: GhlOpportunity[],
+): Map<string, GhlOpportunity> {
+  const oppByPair = new Map<string, GhlOpportunity>();
+  for (const o of openOpps) {
+    oppByPair.set(contactStreetKey(o.contactId, streetFromListingName(o.name)), o);
+  }
+  return oppByPair;
+}
+
+/**
+ * The normal workbench resolution path, shared by queue building and
+ * by enrichment once a detail pull lands an agent phone: find the
+ * canonical GHL contact by phone (create it — with the Listing Street
+ * field stamped — when none exists) and make sure an open opportunity
+ * exists for that contact+street in Pre-Screening · New Prospect.
+ * Assumes merged.agentPhone is a dialable number; throws on any GHL
+ * failure so the caller can record it as a resolution failure.
+ */
+async function resolveAgentCandidate(args: {
+  merged: DealPrefill;
+  address: string;
+  street: string;
+  locationId: string;
+  oppByPair: Map<string, GhlOpportunity>;
+}): Promise<BlastCandidate> {
+  const { merged, address, street, locationId, oppByPair } = args;
+  const agentPhone = merged.agentPhone as string;
+  let contact = await findContactByPhone(locationId, agentPhone);
+  if (!contact) {
+    const name = merged.agentName?.trim();
+    const parts = name?.split(/\s+/) ?? [];
+    contact = await createContact({
+      locationId,
+      firstName: parts[0],
+      lastName: parts.slice(1).join(" ") || undefined,
+      name,
+      phone: agentPhone,
+      email: merged.agentEmail,
+      customFields: [{ id: LISTING_STREET_FIELD_ID, value: street }],
+    });
+  }
+  const pairKey = contactStreetKey(contact.id, street);
+  let opp = oppByPair.get(pairKey);
+  if (!opp) {
+    opp = await createOpportunity({
+      locationId,
+      pipelineId: PRE_SCREENING_ID,
+      pipelineStageId: NEW_PROSPECT_STAGE_ID,
+      contactId: contact.id,
+      name: address,
+    });
+    oppByPair.set(pairKey, opp);
+  }
+  return {
+    contactId: contact.id,
+    contactName: contact.name ?? merged.agentName,
+    firstName: firstNameOf(contact.name, contact.firstName),
+    opportunityId: opp.id,
+    street,
+    phone: contact.phone ?? agentPhone,
+  };
+}
+
+/** planBlastItems' dedupe identity for a candidate, mirrored so item
+ *  metadata (address / listing URL) can be attached after planning. */
+function pairKeyOf(c: { contactId?: string; street: string }): string {
+  return c.contactId
+    ? contactStreetKey(c.contactId, c.street)
+    : `unresolved|${streetKey(c.street)}`;
+}
+
+export interface BuildBlastRunInput {
+  source: BlastSource;
+  stageRef?: { pipelineId: string; stageId: string };
+  properties?: DealPrefill[];
+  scriptKey: BlastScriptKey;
+  dailyCap?: number;
+  /**
+   * Skip the review step: create the run already approved so the
+   * background engine starts it on the next tick. Used ONLY by the
+   * workbench's "Send to all" button — that click is Bradley's
+   * explicit send instruction for the visible list. All engine
+   * exclusions (no phone, DND, suppressed, recently contacted) and
+   * pacing rails still apply unchanged.
+   */
+  autoApprove?: boolean;
+}
+
+export async function buildBlastRun(
+  input: BuildBlastRunInput,
+): Promise<BlastRunDetail> {
+  if (!ghlConfigured()) {
+    throw new BlastError(
+      "not_configured",
+      "GoHighLevel is not configured (GHL_PRIVATE_TOKEN missing).",
+    );
+  }
+  const locationId = ghlLocationId();
+  if (!locationId) {
+    throw new BlastError("not_configured", "GHL_LOCATION_ID is not set.");
+  }
+
+  // ----- Exclusion context (suppression list, live runs, 30-day history) --
+  const { planCtx, openOpps } = await loadPlanContext(locationId);
 
   // ----- Candidates -------------------------------------------------------
   const candidates: BlastCandidate[] = [];
   const resolutionFailures: (BlastCandidate & { error: string })[] = [];
+  // Property identity per candidate (keyed like planBlastItems dedupes)
+  // so created items can carry their address + listing URL — the
+  // agent-lookup enrichment matches detail rows back by URL.
+  const metaByPairKey = new Map<string, { address: string; sourceUrl?: string }>();
+  const noteMeta = (
+    c: BlastCandidate,
+    meta: { address: string; sourceUrl?: string },
+  ) => {
+    const key = pairKeyOf(c);
+    if (!metaByPairKey.has(key)) metaByPairKey.set(key, meta);
+  };
 
   if (input.source === "stage") {
     if (!input.stageRef) {
@@ -295,14 +416,16 @@ export async function buildBlastRun(
     );
     for (const opp of opps) {
       const contact = byId.get(opp.contactId);
-      candidates.push({
+      const candidate: BlastCandidate = {
         contactId: opp.contactId,
         contactName: contact?.name,
         firstName: firstNameOf(contact?.name, contact?.firstName),
         opportunityId: opp.id,
         street: streetFromListingName(opp.name),
         phone: contact?.phone,
-      });
+      };
+      candidates.push(candidate);
+      noteMeta(candidate, { address: opp.name });
     }
   } else {
     // Workbench selection (primary source): resolve each property's
@@ -310,10 +433,7 @@ export async function buildBlastRun(
     // canonical GHL contact by phone, and make sure an open opportunity
     // exists for that contact+street in Pre-Screening · New Prospect.
     const properties = (input.properties ?? []).filter((p) => p.address);
-    const oppByPair = new Map<string, GhlOpportunity>();
-    for (const o of openOpps) {
-      oppByPair.set(contactStreetKey(o.contactId, streetFromListingName(o.name)), o);
-    }
+    const oppByPair = buildOppByPair(openOpps);
     const resolved = await pool(properties, 4, async (posted) => {
       const address = posted.address as string;
       const street = streetFromListingName(address);
@@ -331,49 +451,23 @@ export async function buildBlastRun(
       } catch {
         // cache is best-effort; the posted card data stands on its own
       }
+      const meta = {
+        address,
+        sourceUrl: merged.sourceUrl ?? posted.sourceUrl,
+      };
       const agentPhone = merged.agentPhone;
       if (!agentPhone || normalizePhoneDigits(agentPhone).length < 7) {
-        return { candidate: { street, phone: undefined } as BlastCandidate };
+        return { candidate: { street, phone: undefined } as BlastCandidate, meta };
       }
       try {
-        let contact = await findContactByPhone(locationId, agentPhone);
-        if (!contact) {
-          const name = merged.agentName?.trim();
-          const parts = name?.split(/\s+/) ?? [];
-          contact = await createContact({
-            locationId,
-            firstName: parts[0],
-            lastName: parts.slice(1).join(" ") || undefined,
-            name,
-            phone: agentPhone,
-            email: merged.agentEmail,
-            customFields: [
-              { id: LISTING_STREET_FIELD_ID, value: street },
-            ],
-          });
-        }
-        const pairKey = contactStreetKey(contact.id, street);
-        let opp = oppByPair.get(pairKey);
-        if (!opp) {
-          opp = await createOpportunity({
-            locationId,
-            pipelineId: PRE_SCREENING_ID,
-            pipelineStageId: NEW_PROSPECT_STAGE_ID,
-            contactId: contact.id,
-            name: address,
-          });
-          oppByPair.set(pairKey, opp);
-        }
-        return {
-          candidate: {
-            contactId: contact.id,
-            contactName: contact.name ?? merged.agentName,
-            firstName: firstNameOf(contact.name, contact.firstName),
-            opportunityId: opp.id,
-            street,
-            phone: contact.phone ?? agentPhone,
-          } as BlastCandidate,
-        };
+        const candidate = await resolveAgentCandidate({
+          merged,
+          address,
+          street,
+          locationId,
+          oppByPair,
+        });
+        return { candidate, meta };
       } catch (err) {
         return {
           failure: {
@@ -381,60 +475,114 @@ export async function buildBlastRun(
             phone: agentPhone,
             error: `Agent resolution failed: ${err instanceof Error ? err.message : String(err)}`,
           } as BlastCandidate & { error: string },
+          meta,
         };
       }
     });
     for (const r of resolved) {
-      if (r.failure) resolutionFailures.push(r.failure);
-      else if (r.candidate) candidates.push(r.candidate);
+      if (r.failure) {
+        resolutionFailures.push(r.failure);
+        noteMeta(r.failure, r.meta);
+      } else if (r.candidate) {
+        candidates.push(r.candidate);
+        noteMeta(r.candidate, r.meta);
+      }
     }
   }
 
   // ----- Plan + persist ---------------------------------------------------
-  const plan = planBlastItems(candidates, {
-    suppressedPhones,
-    activeKeys,
-    recentKeys,
-  });
+  const plan = planBlastItems(candidates, planCtx);
   const run = await createBlastRun({
     source: input.source,
     stageRef: input.stageRef,
     scriptKey: input.scriptKey,
     dailyCap: input.dailyCap,
   });
-  const items = await createBlastItems([
-    ...plan.items.map((p) => ({
-      runId: run.id,
-      contactId: p.contactId,
-      contactName: p.contactName,
-      firstName: p.firstName,
-      opportunityId: p.opportunityId,
-      street: p.street,
-      phone: p.phone,
-      status: p.status,
-      error: p.error,
-    })),
-    ...resolutionFailures.map((f) => ({
-      runId: run.id,
-      contactId: f.contactId,
-      contactName: f.contactName,
-      firstName: f.firstName,
-      opportunityId: f.opportunityId,
-      street: f.street,
-      phone: f.phone,
-      status: "failed" as const,
-      error: f.error,
-    })),
+  const created = await createBlastItems([
+    ...plan.items.map((p) => {
+      const meta = metaByPairKey.get(pairKeyOf(p));
+      return {
+        runId: run.id,
+        contactId: p.contactId,
+        contactName: p.contactName,
+        firstName: p.firstName,
+        opportunityId: p.opportunityId,
+        street: p.street,
+        address: meta?.address,
+        sourceUrl: meta?.sourceUrl,
+        phone: p.phone,
+        status: p.status,
+        error: p.error,
+      };
+    }),
+    ...resolutionFailures.map((f) => {
+      const meta = metaByPairKey.get(pairKeyOf(f));
+      return {
+        runId: run.id,
+        contactId: f.contactId,
+        contactName: f.contactName,
+        firstName: f.firstName,
+        opportunityId: f.opportunityId,
+        street: f.street,
+        address: meta?.address,
+        sourceUrl: meta?.sourceUrl,
+        phone: f.phone,
+        status: "failed" as const,
+        error: f.error,
+      };
+    }),
   ]);
+
+  // ----- Agent lookup hand-off ---------------------------------------------
+  // Redfin search rows carry NO agent data, so a workbench property
+  // with a listing URL but no agent phone is not written off as
+  // missing_phone at build time: it starts as "enriching" and the
+  // detail pull (enrichBlastRunStep) gets its chance to find the
+  // listing agent. Stage-sourced items and URL-less properties behave
+  // exactly as before. Enrichment only ever runs on properties
+  // Bradley put into a blast — never on search/load.
+  let items = created;
+  if (input.source === "search") {
+    const flipped = new Map<string, BlastItem>();
+    for (const item of created) {
+      if (item.status === "missing_phone" && item.sourceUrl) {
+        const updated = await updateBlastItem(item.id, {
+          status: "enriching",
+          error: undefined,
+        });
+        if (updated) flipped.set(item.id, updated);
+      }
+    }
+    if (flipped.size > 0) {
+      items = created.map((i) => flipped.get(i.id) ?? i);
+    }
+  }
+  const enrichingCount = items.filter((i) => i.status === "enriching").length;
   await addAudit("blast", "blast.run_created", {
     runId: run.id,
     source: run.source,
     scriptKey: run.scriptKey,
     counts: plan.counts,
     resolutionFailures: resolutionFailures.length,
+    enriching: enrichingCount,
     autoApprove: input.autoApprove === true,
   });
   if (input.autoApprove) {
+    if (enrichingCount > 0) {
+      // "Send to all" is an approval for the list, but a run must not
+      // start half-resolved: it stays a draft while the agent lookup
+      // runs (approveBlastRun refuses too), and Bradley approves from
+      // the panel once every lookup lands.
+      const noted = await updateBlastRun(run.id, {
+        note: "Agent lookup running — this run can be approved once every lookup resolves.",
+      });
+      return {
+        run: noted ?? run,
+        items,
+        counts: blastCounts(items),
+        sentToday: 0,
+      };
+    }
     // "Send to all": the button press IS the approval. Flip the fresh
     // draft run to approved through the same lifecycle function the
     // BlastPanel Approve button uses; the engine picks it up on the
@@ -466,6 +614,17 @@ export async function approveBlastRun(runId: string): Promise<BlastRunDetail> {
       `Run is "${detail.run.status}"; only draft or paused runs can be approved.`,
     );
   }
+  // A run must not start sending half-resolved: while any item is
+  // still waiting on the agent lookup, approval is refused.
+  const enriching = detail.items.filter(
+    (i) => i.status === "enriching",
+  ).length;
+  if (enriching > 0) {
+    throw new BlastError(
+      "bad_status",
+      `Agent lookup still running for ${enriching} item(s) — approval unlocks when every lookup resolves.`,
+    );
+  }
   // Bradley's approval click — the one human gate before any send.
   const run = await updateBlastRun(runId, { status: "approved", note: undefined });
   await addAudit("bradley", "blast.run_approved", { runId });
@@ -492,6 +651,300 @@ export async function stopBlastRun(runId: string): Promise<BlastRunDetail> {
   });
   await addAudit("bradley", "blast.run_stopped", { runId });
   return { ...detail, run: run ?? detail.run };
+}
+
+// ---------- Agent lookup enrichment ----------
+//
+// Redfin SEARCH rows carry no agent data at all, so workbench items
+// built from them would all die as missing_phone. Instead, an item
+// with a listing URL but no agent phone starts as "enriching" and this
+// step machine pulls the property's Redfin DETAIL page via the
+// memo23 Actor — the MLS disclaimer block on that page names the
+// listing agent and his direct number. The detail Actor takes ~50s
+// per property, so the run is ASYNC: each enrich step does one short
+// piece of work (start the run / poll it / apply its rows) and the
+// panel polls the step endpoint. Enrichment spends Apify credits only
+// on properties Bradley put into a blast — never on search or load.
+
+export type EnrichPhase = "idle" | "started" | "running" | "applied" | "failed";
+
+export interface EnrichResult extends BlastRunDetail {
+  phase: EnrichPhase;
+  /** Items still in "enriching" after this step. */
+  pending: number;
+  /** Phase "applied": items whose agent phone was found and whose
+   *  resolution through the normal path was applied. */
+  resolved?: number;
+  /** Phase "applied"/"failed": items that ended up missing_phone. */
+  missing?: number;
+}
+
+/** Max listing URLs per detail run; extra items wait for the next batch. */
+const ENRICH_BATCH_URLS = 25;
+const ENRICH_TERMINAL_FAILURES = ["FAILED", "ABORTED", "TIMED-OUT"];
+
+function normalizeListingUrl(url?: string): string {
+  return (url ?? "").trim().toLowerCase().replace(/\/+$/, "");
+}
+
+/**
+ * The batch an outstanding (or next) detail run covers: the first
+ * ENRICH_BATCH_URLS distinct listing URLs among the enriching items,
+ * in item order. Computed identically at start and at apply time —
+ * the enriching set cannot change in between — so batches line up.
+ */
+function enrichBatch(enriching: BlastItem[]): {
+  urls: string[];
+  inBatch: Set<string>;
+} {
+  const urls: string[] = [];
+  const seen = new Set<string>();
+  for (const item of enriching) {
+    if (!item.sourceUrl) continue;
+    const key = normalizeListingUrl(item.sourceUrl);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (urls.length < ENRICH_BATCH_URLS) urls.push(item.sourceUrl);
+  }
+  const batchKeys = new Set(urls.map(normalizeListingUrl));
+  const inBatch = new Set(
+    enriching
+      .filter(
+        (i) => i.sourceUrl && batchKeys.has(normalizeListingUrl(i.sourceUrl)),
+      )
+      .map((i) => i.id),
+  );
+  return { urls, inBatch };
+}
+
+export async function enrichBlastRunStep(
+  runId: string,
+): Promise<EnrichResult> {
+  const detail = await getBlastRunDetail(runId);
+  if (!detail) throw new BlastError("not_found", `Blast run ${runId} not found.`);
+  const enriching = detail.items.filter((i) => i.status === "enriching");
+  const reload = async (): Promise<BlastRunDetail> =>
+    (await getBlastRunDetail(runId)) ?? detail;
+  const remaining = (d: BlastRunDetail) =>
+    d.items.filter((i) => i.status === "enriching").length;
+
+  // ----- Phase 1: start the detail run ------------------------------------
+  if (!detail.run.enrichRunId) {
+    if (enriching.length === 0) {
+      return { ...detail, phase: "idle", pending: 0 };
+    }
+    const { urls } = enrichBatch(enriching);
+    if (!apifyConfigured() || urls.length === 0) {
+      const error = !apifyConfigured()
+        ? "Agent lookup unavailable: APIFY_TOKEN is not set."
+        : "No listing URL to look up.";
+      for (const item of enriching) {
+        await updateBlastItem(item.id, { status: "missing_phone", error });
+      }
+      await addAudit("blast", "blast.enrich_failed", {
+        runId,
+        reason: !apifyConfigured() ? "apify_not_configured" : "no_urls",
+        items: enriching.length,
+      });
+      const fresh = await reload();
+      return {
+        ...fresh,
+        phase: "failed",
+        pending: remaining(fresh),
+        missing: enriching.length,
+      };
+    }
+    // memo23's schema wants startUrls as plain URL strings.
+    const started = await startActorRun(redfinDetailActorId(), {
+      startUrls: urls,
+    });
+    await updateBlastRun(runId, {
+      enrichRunId: started.runId,
+      enrichDatasetId: started.datasetId,
+    });
+    await addAudit("blast", "blast.enrich_started", {
+      runId,
+      apifyRunId: started.runId,
+      urls: urls.length,
+      pending: enriching.length,
+    });
+    const fresh = await reload();
+    return { ...fresh, phase: "started", pending: remaining(fresh) };
+  }
+
+  // ----- Phase 2: poll the outstanding run ---------------------------------
+  const runRef = await getActorRun(detail.run.enrichRunId);
+
+  if (ENRICH_TERMINAL_FAILURES.includes(runRef.status)) {
+    const { inBatch } = enrichBatch(enriching);
+    let missing = 0;
+    for (const item of enriching) {
+      // Items outside this batch keep their chance with the next one.
+      if (item.sourceUrl && !inBatch.has(item.id)) continue;
+      await updateBlastItem(item.id, {
+        status: "missing_phone",
+        error: `Agent lookup failed (${runRef.status.toLowerCase()}); no agent phone found.`,
+      });
+      missing += 1;
+    }
+    await updateBlastRun(runId, {
+      enrichRunId: undefined,
+      enrichDatasetId: undefined,
+    });
+    await addAudit("blast", "blast.enrich_failed", {
+      runId,
+      apifyStatus: runRef.status,
+      items: missing,
+    });
+    const fresh = await reload();
+    return {
+      ...fresh,
+      phase: "failed",
+      pending: remaining(fresh),
+      missing,
+    };
+  }
+
+  if (runRef.status !== "SUCCEEDED") {
+    return { ...detail, phase: "running", pending: enriching.length };
+  }
+
+  // ----- Phase 3: apply the detail rows ------------------------------------
+  if (!ghlConfigured()) {
+    throw new BlastError(
+      "not_configured",
+      "GoHighLevel is not configured (GHL_PRIVATE_TOKEN missing).",
+    );
+  }
+  const locationId = ghlLocationId();
+  if (!locationId) {
+    throw new BlastError("not_configured", "GHL_LOCATION_ID is not set.");
+  }
+  const datasetId = detail.run.enrichDatasetId ?? runRef.datasetId;
+  const rows = datasetId ? await getDatasetItems(datasetId) : [];
+  const details: RedfinDetail[] = rows.map((r) => mapRedfinDetailRow(r));
+  const { planCtx, openOpps } = await loadPlanContext(locationId);
+  const oppByPair = buildOppByPair(openOpps);
+  const { inBatch } = enrichBatch(enriching);
+  let resolved = 0;
+  let missing = 0;
+
+  for (const item of enriching) {
+    if (!inBatch.has(item.id)) {
+      // Not in this batch: a URL-bearing item waits for the next
+      // batch; a URL-less one can never resolve (defensive — build
+      // never creates one).
+      if (!item.sourceUrl) {
+        await updateBlastItem(item.id, {
+          status: "missing_phone",
+          error: "No listing URL to look up.",
+        });
+        missing += 1;
+      }
+      continue;
+    }
+    const found =
+      details.find(
+        (d) =>
+          d.sourceUrl &&
+          item.sourceUrl &&
+          normalizeListingUrl(d.sourceUrl) === normalizeListingUrl(item.sourceUrl),
+      ) ??
+      (item.address
+        ? details.find(
+            (d) => d.address && cacheKey(d.address) === cacheKey(item.address as string),
+          )
+        : undefined);
+    const address = item.address ?? found?.address ?? item.street;
+
+    // Merge whatever the detail pull found into the property cache
+    // (best-effort) so the workbench and future builds reuse it.
+    let cachedPrefill: DealPrefill | undefined;
+    try {
+      cachedPrefill = (await getCachedPrefill(address, 3650))?.prefill;
+    } catch {
+      // cache is best-effort
+    }
+    const phone =
+      found?.agentPhone &&
+      normalizePhoneDigits(found.agentPhone).length >= 7
+        ? found.agentPhone
+        : undefined;
+    const enriched: DealPrefill = {
+      ...(cachedPrefill ?? { source: "redfin" as const }),
+      address: cachedPrefill?.address ?? address,
+      sourceUrl:
+        cachedPrefill?.sourceUrl ?? found?.sourceUrl ?? item.sourceUrl,
+      agentName: found?.agentName ?? cachedPrefill?.agentName,
+      agentPhone: phone ?? cachedPrefill?.agentPhone,
+      agentBrokerage: found?.agentBrokerage ?? cachedPrefill?.agentBrokerage,
+    };
+    if (found) {
+      try {
+        await putCachedPrefill(address, enriched, "apify-detail");
+      } catch {
+        // cache is best-effort
+      }
+    }
+
+    if (!phone) {
+      // The broker's office line is NOT a substitute — the listing
+      // agent's own number or nothing.
+      await updateBlastItem(item.id, {
+        status: "missing_phone",
+        contactName: found?.agentName ?? item.contactName,
+        error: "Detail pull found no agent phone.",
+      });
+      missing += 1;
+      continue;
+    }
+    try {
+      const candidate = await resolveAgentCandidate({
+        merged: enriched,
+        address,
+        street: item.street,
+        locationId,
+        oppByPair,
+      });
+      // The build-time rails still apply to the resolved candidate
+      // (suppression / already-active / contacted <30 days).
+      const planned = planBlastItems([candidate], planCtx).items[0];
+      await updateBlastItem(item.id, {
+        contactId: planned.contactId,
+        contactName: planned.contactName,
+        firstName: planned.firstName,
+        opportunityId: planned.opportunityId,
+        phone: planned.phone,
+        status: planned.status,
+        error: planned.error,
+      });
+      resolved += 1;
+    } catch (err) {
+      await updateBlastItem(item.id, {
+        status: "failed",
+        phone,
+        error: `Agent resolution failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
+
+  await updateBlastRun(runId, {
+    enrichRunId: undefined,
+    enrichDatasetId: undefined,
+  });
+  await addAudit("blast", "blast.enrich_applied", {
+    runId,
+    resolved,
+    missing,
+  });
+  const fresh = await reload();
+  return {
+    ...fresh,
+    phase: "applied",
+    pending: remaining(fresh),
+    resolved,
+    missing,
+  };
 }
 
 // ---------- The send engine (shared by step route + tick) ----------

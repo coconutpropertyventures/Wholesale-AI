@@ -95,12 +95,13 @@ for multi-tenant SaaS operation (every record carries an `organizationId`).
 - Editable offer drafts generated from approved default scripts, saved to a
   drafts queue with approve/reject. Approved is NOT sent — sending is a
   separate, gated action.
-- Automated tests: `npm test` (132 tests — underwriting math incl. the
+- Automated tests: `npm test` (164 tests — underwriting math incl. the
   traditional model, Gmail parsing, pipeline aggregation + pipeline map,
   URL parsing, Redfin search-URL building, Actor/RentCast row mapping,
-  under-contract matching,
+  Redfin detail (agent lookup) mapping, under-contract matching,
   learning-loop counting, AI cost controls, draft personalization,
-  context-dependent model selection, blast auto-approve).
+  context-dependent model selection, blast queue/pacing rules, blast
+  auto-approve, and the blast agent-lookup enrich state machine).
 
 ## Property data: sources, costs, and the RentCast gate (Milestone 3)
 
@@ -139,9 +140,9 @@ for multi-tenant SaaS operation (every record carries an `organizationId`).
   level in its shared readers so wrapped and flat rows map
   identically. Note the search rows carry **no listing-agent
   contact fields at all** — agent name/phone/email stay absent on
-  that path (never invented), so blast items sourced from search
-  results alone resolve their agent from the cached detail record
-  or surface as missing-phone. The Zillow
+  that path (never invented), which is why blast items sourced from
+  search results get the agent-lookup detail pull described in the
+  Blast section below. The Zillow
   detail Actor receives ONLY `startUrls` (`[{url}]`, home detail URLs)
   when a link is given and/or `addresses` (`["123 Main St, City, State"]`)
   when an address is given — its optional `propertyStatus` is
@@ -249,6 +250,33 @@ in that stage). Build-time exclusions, each counted in the preview: no
 phone on file (`missing_phone` — a phone is never invented), contact on
 the suppression list, contact+street already in a live run, and
 contact+street already sent via this app within 30 days.
+
+**Agent lookup (workbench items with a listing URL but no agent
+phone).** Redfin *search* rows carry no agent data at all, so a
+workbench property whose cached detail lacks the agent's phone is not
+written off at build time: its item starts as `enriching` and the
+Redfin *detail* page for the listing is pulled via the
+`memo23/apify-redfin-cheerio` Actor (override with
+`APIFY_REDFIN_DETAIL_ACTOR`; ~$0.009 per property). The listing agent
+is read from the page's MLS disclaimer block only —
+`listingAgentName` / `listingAgentNumber` — which is the agent's own
+direct number; Redfin's own touring/partner agents on the same page
+are never mapped, and the brokerage's office line is never substituted
+for the agent's number. The detail Actor takes ~50s per property, so
+the lookup runs as an async step machine (`POST
+/api/blast/runs/[id]/enrich`): the panel polls it (~10s) while a run
+has enriching items, each call starting the Apify run, reporting it
+running, or applying its rows. Applied rows merge into the property
+cache (source tag `apify-detail`) and each item resolves through the
+exact same contact/opportunity path and build-time rails as a normal
+queue build; a detail page with no agent number leaves the item
+`missing_phone` ("Detail pull found no agent phone"). A run **cannot
+be approved while any item is enriching** — the Approve button waits
+("Waiting for agent lookup…") and the server refuses too — and the
+"Send to all" auto-approval likewise holds the run as a draft until
+the lookup finishes. Enrichment spends Apify credits only on
+properties Bradley puts into a blast; searching or loading the
+workbench never triggers it.
 
 **The rails (all enforced server-side in `lib/blast/pacing.ts` and the
 shared engine `stepBlastRun` in `lib/blast/service.ts`):**
