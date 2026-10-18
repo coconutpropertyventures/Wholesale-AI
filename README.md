@@ -95,9 +95,10 @@ for multi-tenant SaaS operation (every record carries an `organizationId`).
 - Editable offer drafts generated from approved default scripts, saved to a
   drafts queue with approve/reject. Approved is NOT sent — sending is a
   separate, gated action.
-- Automated tests: `npm test` (120 tests — underwriting math incl. the
+- Automated tests: `npm test` (132 tests — underwriting math incl. the
   traditional model, Gmail parsing, pipeline aggregation + pipeline map,
-  URL parsing, Actor/RentCast row mapping, under-contract matching,
+  URL parsing, Redfin search-URL building, Actor/RentCast row mapping,
+  under-contract matching,
   learning-loop counting, AI cost controls, draft personalization,
   context-dependent model selection, blast auto-approve).
 
@@ -112,7 +113,23 @@ for multi-tenant SaaS operation (every record carries an `organizationId`).
   "Run underwriting" on a result card — that path is instant because the
   search results were just cached. Actor IDs are configurable
   (`APIFY_ZILLOW_ACTOR`, default `maxcopell/zillow-detail-scraper`;
-  `APIFY_REDFIN_ACTOR`, default `tri_angle/redfin-search`). Actor access
+  `APIFY_REDFIN_ACTOR`, default `tri_angle/redfin-search`). **Actor
+  inputs match each Actor's verified schema exactly** (checked with
+  fetch-actor-details, 2026-10-18 — Apify silently ignores unknown keys,
+  so extra "just in case" fields break runs invisibly): the Redfin
+  search Actor accepts ONLY `searchUrls` (an array of `{url}` holding
+  Redfin MAP search URLs) plus an optional `zoomIn`. The app builds that
+  URL from the query (`lib/deals/redfinUrl.ts`): a ZIP (or ZIP+4) query
+  becomes `https://www.redfin.com/zipcode/{zip}`; any other query is
+  geocoded server-side with the OpenStreetMap Nominatim API and becomes
+  `https://www.redfin.com/filter/viewport={latN}:{latS}:{lngE}:{lngW},no-outline`
+  from the result's bounding box — an unresolvable place returns a clear
+  "try a ZIP code" error rather than a doomed Actor run. The Zillow
+  detail Actor receives ONLY `startUrls` (`[{url}]`, home detail URLs)
+  when a link is given and/or `addresses` (`["123 Main St, City, State"]`)
+  when an address is given — its optional `propertyStatus` is
+  deliberately not sent, since the Actor determines status itself.
+  Actor access
   in the app uses Apify's REST run-sync endpoint; the same Actors are
   exposed to agents through Apify MCP (mcp.apify.com). Costs are
   per-result at Apify's rates (on the order of $1.30–$2.50 per 1,000

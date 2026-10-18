@@ -7,6 +7,7 @@
 // is absent, apifyConfigured() is false and callers must say so plainly —
 // this client never fabricates listing data.
 import { mapApifyRow, mapRedfinRow, type DealPrefill } from "@/lib/deals/prefill";
+import { resolveRedfinSearchUrl } from "@/lib/deals/redfinUrl";
 
 const APIFY_BASE = "https://api.apify.com/v2";
 const RUN_TIMEOUT_MS = 110_000;
@@ -28,8 +29,13 @@ type RawRow = Record<string, unknown>;
 /**
  * Run an Actor synchronously and return its dataset rows.
  * Actor IDs are "username/name"; the API path wants "username~name".
- * Inputs are merged defensively: different Actors read different keys
- * (locations / startUrls / search / url), and unknown keys are ignored.
+ * Inputs must match each Actor's verified schema EXACTLY (checked with
+ * fetch-actor-details, 2026-10-18): Apify Actors silently ignore keys
+ * outside their schema, so a "merged, send-every-plausible-key" input
+ * looks accepted while the Actor never sees the values it needs — that
+ * is exactly how the Redfin search broke (production run
+ * p6c7cmHm6VG8SGtHq FAILED in 2.3s). Each caller below sends only the
+ * keys its Actor actually defines.
  */
 export async function runActorSync(
   actorId: string,
@@ -67,35 +73,39 @@ export async function lookupListing(input: {
   url?: string;
   address?: string;
 }): Promise<DealPrefill | null> {
-  const merged: Record<string, unknown> = { maxItems: 1, propertyDetails: true };
+  // maxcopell/zillow-detail-scraper's verified schema (fetch-actor-details,
+  // 2026-10-18): `startUrls` (home detail URLs) and/or `addresses`
+  // ("123 Main St, City, State"). Its optional `propertyStatus` enum
+  // defaults to RECENTLY_SOLD, but per the Actor's docs it determines
+  // the status itself — do NOT send it. Send only these two keys.
+  const actorInput: Record<string, unknown> = {};
   if (input.url) {
-    merged.startUrls = [{ url: input.url }];
-    merged.urls = [input.url];
-    merged.url = input.url;
+    actorInput.startUrls = [{ url: input.url }];
   }
   if (input.address) {
-    merged.locations = [input.address];
-    merged.addresses = [input.address];
-    merged.search = input.address;
+    actorInput.addresses = [input.address];
   }
-  const rows = await runActorSync(zillowActorId(), merged);
+  const rows = await runActorSync(zillowActorId(), actorInput);
   if (rows.length === 0) return null;
   const prefill = mapApifyRow(rows[0]);
   if (!prefill.sourceUrl && input.url) prefill.sourceUrl = input.url;
   return prefill;
 }
 
-/** Redfin search for a city / ZIP / address query. Returns mapped rows. */
-export async function searchRedfin(
-  query: string,
-  maxItems = 20,
-): Promise<DealPrefill[]> {
+/**
+ * Redfin search for a city / ZIP query. Returns mapped rows.
+ * tri_angle/redfin-search's verified schema (fetch-actor-details,
+ * 2026-10-18) accepts ONLY `searchUrls` — an array of {url} holding
+ * Redfin MAP search URLs — plus an optional `zoomIn` boolean. It has no
+ * search/query/keyword/maxItems fields. The map URL is built by
+ * lib/deals/redfinUrl.ts: a /zipcode/{zip} URL for ZIP queries, or a
+ * geocoded viewport URL for city queries.
+ */
+export async function searchRedfin(query: string): Promise<DealPrefill[]> {
+  const url = await resolveRedfinSearchUrl(query);
   const rows = await runActorSync(redfinActorId(), {
-    search: query,
-    query,
-    keyword: query,
-    maxItems,
-    maxResults: maxItems,
+    searchUrls: [{ url }],
+    zoomIn: true,
   });
   return rows.map(mapRedfinRow).filter((p) => p.address || p.listPrice);
 }
