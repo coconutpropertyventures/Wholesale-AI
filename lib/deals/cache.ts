@@ -92,6 +92,75 @@ export async function getCachedPrefill(
   }
 }
 
+// ---------- Generic JSON entries ----------
+//
+// Same table / fallback pattern, for payloads that are not DealPrefills
+// (today: turnkey comps results, stored under a "comps:" key prefix
+// with source "comps"). Kept separate from the prefill helpers so the
+// two JSON shapes can never be confused for each other.
+
+export interface CachedEntry<T> {
+  data: T;
+  source: string;
+  fetchedAt: string; // ISO
+}
+
+const genericMemory = new Map<string, CachedEntry<unknown>>();
+
+export async function getCachedEntry<T>(
+  key: string,
+  maxAgeDays: number,
+): Promise<CachedEntry<T> | null> {
+  const k = cacheKey(key);
+  try {
+    if (usePostgres()) {
+      await ensureTable();
+      const { rows } = await getPool().query<{ data: CachedEntry<T> }>(
+        `SELECT data FROM wai_property_cache WHERE key = $1`,
+        [k],
+      );
+      const hit = rows[0]?.data;
+      if (hit && "data" in hit && isFresh(hit.fetchedAt, maxAgeDays)) {
+        return hit;
+      }
+      return null;
+    }
+    const hit = genericMemory.get(k) as CachedEntry<T> | undefined;
+    if (hit && isFresh(hit.fetchedAt, maxAgeDays)) return hit;
+    return null;
+  } catch {
+    return null; // a broken cache must never break the caller
+  }
+}
+
+export async function putCachedEntry<T>(
+  key: string,
+  data: T,
+  source: string,
+): Promise<void> {
+  const k = cacheKey(key);
+  const entry: CachedEntry<T> = {
+    data,
+    source,
+    fetchedAt: new Date().toISOString(),
+  };
+  try {
+    if (usePostgres()) {
+      await ensureTable();
+      await getPool().query(
+        `INSERT INTO wai_property_cache (key, data, fetched_at)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (key) DO UPDATE SET data = $2, fetched_at = $3`,
+        [k, JSON.stringify(entry), entry.fetchedAt],
+      );
+      return;
+    }
+    genericMemory.set(k, entry as CachedEntry<unknown>);
+  } catch {
+    // best-effort, same posture as putCachedPrefill
+  }
+}
+
 export async function putCachedPrefill(
   key: string,
   prefill: DealPrefill,

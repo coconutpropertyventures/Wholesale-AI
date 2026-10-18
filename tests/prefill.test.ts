@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  fillMissingPrefill,
   mapApifyRow,
+  mapRedfinDetailPrefill,
   mapRedfinDetailRow,
   mapRedfinRow,
   unwrap,
@@ -25,6 +27,7 @@ const TRIANGLE_ROW = {
   yearBuilt: { value: 2003, level: 1 },
   postalCode: { value: "46204", level: 1 },
   latLong: { value: { latitude: 39.7705817, longitude: -86.1500539 }, level: 1 },
+  location: { value: "Lockerbie Terrace", level: 1 },
   lotSize: { level: 1 }, // wrapper with NO value key -> stays absent
   beds: 2,
   baths: 2,
@@ -89,6 +92,13 @@ describe("mapRedfinRow with the wrapped tri_angle shape", () => {
     expect(p.city).toBe("Indianapolis");
     expect(p.state).toBe("IN");
     expect(p.zip).toBe("46204");
+  });
+
+  it("maps coordinates, neighborhood, and propertyId for the comps engine", () => {
+    expect(p.latitude).toBe(39.7705817);
+    expect(p.longitude).toBe(-86.1500539);
+    expect(p.neighborhood).toBe("Lockerbie Terrace");
+    expect(p.propertyId).toBe(199882420);
   });
 
   it("does not duplicate the unit already inside streetLine", () => {
@@ -268,5 +278,173 @@ describe("mapRedfinDetailRow (memo23 Redfin detail)", () => {
       address: undefined,
       sourceUrl: undefined,
     });
+  });
+});
+
+describe("fillMissingPrefill", () => {
+  it("keeps base values and fills only the gaps", () => {
+    const merged = fillMissingPrefill(
+      { address: "1 Main St", listPrice: 100000, source: "redfin" },
+      { listPrice: 200000, beds: 3, sqft: 1200, source: "apify" },
+    );
+    expect(merged.listPrice).toBe(100000); // base wins
+    expect(merged.beds).toBe(3);
+    expect(merged.sqft).toBe(1200);
+    expect(merged.source).toBe("redfin"); // base's source is never overwritten
+  });
+
+  it("takes the first defined value across fills, in order", () => {
+    const merged = fillMissingPrefill(
+      { address: "1 Main St", source: "redfin" },
+      { beds: 3, source: "redfin" },
+      { beds: 4, baths: 2, source: "redfin" },
+    );
+    expect(merged.beds).toBe(3);
+    expect(merged.baths).toBe(2);
+  });
+
+  it("does not mutate the base record", () => {
+    const base = { address: "1 Main St", source: "redfin" as const };
+    fillMissingPrefill(base, { beds: 3, source: "apify" });
+    expect(base).toEqual({ address: "1 Main St", source: "redfin" });
+  });
+});
+
+// The full memo23 detail-page payload shape, pinned from the verified
+// live row for 225 N New Jersey St (dataset AaApW7NmuBmfM6neq,
+// 2026-10-18): streetAddress is a structured OBJECT, taxes exist only
+// as a county RATE in the mortgage calculator block (taxInfo is {}),
+// insurance is a yearly estimate, and neither the Redfin Estimate nor
+// a rent amount is present anywhere in the payload.
+const MEMO23_FULL_ROW = {
+  url: "https://www.redfin.com/IN/Indianapolis/225-N-New-Jersey-St-46204/unit-27/home/199882420",
+  streetAddress: {
+    streetNumber: "225",
+    directionalPrefix: "N",
+    streetName: "New Jersey",
+    streetType: "St",
+    directionalSuffix: "",
+    unitType: "#",
+    unitValue: "27",
+  },
+  cityName: "Indianapolis",
+  stateOrProvinceCode: "IN",
+  postalCode: "46204",
+  numBeds: 2,
+  numBaths: 2,
+  sqFt: { displayLevel: 1, value: 1237 },
+  priceInfo: { amount: 325000, label: "Price", displayLevel: 1 },
+  listingPrice: "325000_US_DOLLAR",
+  hasAvm: true,
+  propertyId: 199882420,
+  latitude: 39.7705817,
+  longitude: -86.1500539,
+  latLong: { latitude: 39.7705817, longitude: -86.1500539 },
+  rentalEstimateInfo: { displayLevel: 1, propertyId: 199882420, shouldShow: true },
+  publicRecordsInfo: {
+    taxInfo: {},
+    allTaxInfo: [],
+    addressInfo: {
+      street: "225 N New Jersey St #27",
+      city: "Indianapolis",
+      state: "IN",
+      zip: "46204",
+    },
+    latestListingInfo: {
+      beds: 2,
+      baths: 2,
+      totalSqFt: 1237,
+      yearBuilt: 2003,
+      propertyTypeName: "Condo/Co-op",
+    },
+    mortgageCalculatorInfo: {
+      monthlyHoaDues: 485,
+      propertyTaxRate: 2.2024615384615385,
+      homeInsuranceData: { homeInsuranceYearlyEstimate: 1588, yearBuilt: 2003 },
+    },
+  },
+  mlsDisclaimerInfo: {
+    listingAgentName: "Timothy Birky",
+    listingAgentNumber: "317-550-0700",
+    listingBrokerName: "F.C. Tucker Company",
+    listingBrokerNumber: "317-843-7766",
+  },
+  primaryListingAgentName: "Timothy Birky",
+};
+
+describe("mapRedfinDetailPrefill (memo23 full detail row)", () => {
+  const p = mapRedfinDetailPrefill(MEMO23_FULL_ROW);
+
+  it("maps the core property fields", () => {
+    expect(p.address).toBe("225 N New Jersey St #27, Indianapolis, IN 46204");
+    expect(p.listPrice).toBe(325000); // priceInfo.amount
+    expect(p.beds).toBe(2);
+    expect(p.baths).toBe(2);
+    expect(p.sqft).toBe(1237); // wrapped sqFt
+    expect(p.yearBuilt).toBe(2003);
+    expect(p.hoaMonthly).toBe(485); // monthlyHoaDues
+    expect(p.propertyId).toBe(199882420);
+    expect(p.latitude).toBe(39.7705817);
+    expect(p.longitude).toBe(-86.1500539);
+    expect(p.source).toBe("redfin");
+    expect(p.sourceUrl).toBe(MEMO23_FULL_ROW.url);
+  });
+
+  it("derives annual taxes from the record's own county tax rate", () => {
+    // taxInfo carries no amount on the verified row; the record's
+    // rate (2.2024615%) x list price is the record-sourced estimate.
+    expect(p.annualTaxes).toBe(7158);
+  });
+
+  it("maps the insurance yearly estimate", () => {
+    expect(p.annualInsurance).toBe(1588);
+  });
+
+  it("carries the listing agent from the MLS block", () => {
+    expect(p.agentName).toBe("Timothy Birky");
+    expect(p.agentPhone).toBe("317-550-0700");
+    expect(p.agentBrokerage).toBe("F.C. Tucker Company");
+  });
+
+  it("leaves value and rent estimates absent — the payload has no amounts for them", () => {
+    expect(p.valueEstimate).toBeUndefined(); // hasAvm flag only, no AVM amount
+    expect(p.rentEstimate).toBeUndefined(); // rentalEstimateInfo has no rent amount
+  });
+
+  it("prefers a direct tax amount over the rate derivation", () => {
+    const withAmount = mapRedfinDetailPrefill({
+      ...MEMO23_FULL_ROW,
+      publicRecordsInfo: {
+        ...MEMO23_FULL_ROW.publicRecordsInfo,
+        taxInfo: { taxAnnualAmount: 6900 },
+      },
+    });
+    expect(withAmount.annualTaxes).toBe(6900);
+  });
+
+  it("composes the street from the structured streetAddress when no composed string exists", () => {
+    const noComposed = {
+      ...MEMO23_FULL_ROW,
+      publicRecordsInfo: {
+        ...MEMO23_FULL_ROW.publicRecordsInfo,
+        addressInfo: {},
+      },
+    };
+    const q = mapRedfinDetailPrefill(noComposed);
+    expect(q.address).toBe("225 N New Jersey St #27, Indianapolis, IN 46204");
+  });
+
+  it("falls back to latestListingInfo for beds/baths/sqft/yearBuilt", () => {
+    const sparse = {
+      ...MEMO23_FULL_ROW,
+      numBeds: undefined,
+      numBaths: undefined,
+      sqFt: undefined,
+    };
+    const q = mapRedfinDetailPrefill(sparse);
+    expect(q.beds).toBe(2);
+    expect(q.baths).toBe(2);
+    expect(q.sqft).toBe(1237);
+    expect(q.yearBuilt).toBe(2003);
   });
 });

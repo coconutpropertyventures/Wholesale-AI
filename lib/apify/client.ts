@@ -6,7 +6,12 @@
 // The token lives ONLY in process.env.APIFY_TOKEN (server-side). When it
 // is absent, apifyConfigured() is false and callers must say so plainly —
 // this client never fabricates listing data.
-import { mapApifyRow, mapRedfinRow, type DealPrefill } from "@/lib/deals/prefill";
+import {
+  mapApifyRow,
+  mapRedfinDetailPrefill,
+  mapRedfinRow,
+  type DealPrefill,
+} from "@/lib/deals/prefill";
 import { resolveRedfinSearchUrl } from "@/lib/deals/redfinUrl";
 
 const APIFY_BASE = "https://api.apify.com/v2";
@@ -120,6 +125,29 @@ export async function searchRedfin(query: string): Promise<DealPrefill[]> {
     zoomIn: true,
   });
   return rows.map(mapRedfinRow).filter((p) => p.address || p.listPrice);
+}
+
+/**
+ * Full property record for one Redfin listing URL, via the DETAIL
+ * Actor (memo23) — the workbench's "fullest record" source: beds /
+ * baths / sqft / year built, HOA dues, the property's tax rate and an
+ * insurance estimate, plus the listing agent (mapRedfinDetailPrefill
+ * pins the shapes). `startUrls` goes as plain URL STRINGS: the
+ * Actor's schema validation rejects {url} objects (verified live,
+ * 2026-10-18). One run pulls one listing (~$0.009, tens of seconds);
+ * callers cache the merged result so it is paid for once. Returns the
+ * row whose URL matches, else the first row, else null.
+ */
+export async function fetchRedfinDetailPrefill(
+  url: string,
+): Promise<DealPrefill | null> {
+  const rows = await runActorSync(redfinDetailActorId(), {
+    startUrls: [url],
+  });
+  if (rows.length === 0) return null;
+  const match =
+    rows.find((r) => typeof r.url === "string" && r.url === url) ?? rows[0];
+  return mapRedfinDetailPrefill(match);
 }
 
 // ---------- Async runs (start / poll / fetch) ----------

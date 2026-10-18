@@ -362,6 +362,15 @@ table.kv td:first-child { color: var(--ink-soft); width: 45%; }
 
 /* ---------- Workbench extras ---------- */
 
+.comps-strip {
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 10px 12px; margin-top: 12px; background: #fbfcfd;
+}
+.comps-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.comps-head h4 { margin: 0; }
+.comps-list { margin: 6px 0; padding-left: 18px; font-size: 12.5px; }
+.comps-list li { margin: 2px 0; }
+
 .inline-row { display: flex; gap: 8px; }
 .inline-row input { flex: 1; }
 .search-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; margin-top: 10px; }

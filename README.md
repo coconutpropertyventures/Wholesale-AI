@@ -95,7 +95,7 @@ for multi-tenant SaaS operation (every record carries an `organizationId`).
 - Editable offer drafts generated from approved default scripts, saved to a
   drafts queue with approve/reject. Approved is NOT sent — sending is a
   separate, gated action.
-- Automated tests: `npm test` (164 tests — underwriting math incl. the
+- Automated tests: `npm test` (222 tests — underwriting math incl. the
   traditional model, Gmail parsing, pipeline aggregation + pipeline map,
   URL parsing, Redfin search-URL building, Actor/RentCast row mapping,
   Redfin detail (agent lookup) mapping, under-contract matching,
@@ -178,6 +178,89 @@ for multi-tenant SaaS operation (every record carries an `organizationId`).
   drafter (below) is fed up to 3 such winning examples. That is the
   entire mechanism today — counting and retrieval, no model training
   and no auto-editing of the approved scripts.
+
+## Run Underwriting completeness, turnkey auto-comps, and editable expenses
+
+- **Run Underwriting completes the record first.** Clicking "Run
+  underwriting" (a search result card, or the form button while it
+  shows the loaded property) builds the *fullest* record available
+  before the calculator runs: the card/lookup prefill is merged with
+  the cached record, and when key fields are still missing
+  (yearBuilt, sqft, beds/baths, hoaMonthly, taxes, rentEstimate,
+  valueEstimate) `POST /api/deals/detail` pulls the listing's DETAIL
+  record once — Redfin URLs via the memo23 detail Actor
+  (`APIFY_REDFIN_DETAIL_ACTOR`, `startUrls` sent as plain URL strings,
+  the only form its validation accepts), Zillow URLs via the existing
+  detail lookup. Merging is fill-blanks only
+  (`fillMissingPrefill`): a value already present is never
+  overwritten. The merged record is cached with source tag
+  `apify-detail` so the detail pull is paid for once per property.
+  The button reads "Loading full property details + comps…" while
+  this runs. Detail-row shapes are pinned in `mapRedfinDetailPrefill`
+  (verified live, 2026-10-18): list price from `priceInfo.amount`,
+  HOA from `mortgageCalculatorInfo.monthlyHoaDues`, insurance from
+  `homeInsuranceData.homeInsuranceYearlyEstimate`; the row's
+  `publicRecordsInfo.taxInfo` carries **no assessed tax amount**
+  (`allTaxInfo` is also empty), so annual taxes are derived from the
+  record's own county `propertyTaxRate` × list price — a
+  record-sourced estimate, never an invented figure (a direct tax
+  amount key wins when a row carries one). The payload contains **no
+  Redfin Estimate amount** (`hasAvm` is only a flag) and **no rent
+  amount** (`rentalEstimateInfo` carries neither), so those two stay
+  blank from the detail path — the comps below fill them. Fields no
+  source carries stay blank in the form; nothing is invented.
+- **Turnkey auto-comps** (`lib/deals/comps.ts` +
+  `POST /api/deals/comps`, Houses/Turnkey mode only). When a property
+  is loaded into the workbench, the app runs two more
+  `tri_angle/redfin-search` feeds inside a 0.5-mile viewport around
+  the subject (subject coordinates come from its cached record —
+  search rows now map `latLong` + neighborhood + `propertyId` — or a
+  Nominatim geocode of the address):
+  - *Sold feed* — `…/zipcode/{zip}/filter/viewport=N:S:E:W,no-outline,include=sold-1yr`.
+    Pinned contract (dataset `DiSlJZ6G6M7j1yged`, 254 rows): the
+    sold price is `price` (`{value}`-wrapped; no separate sold-price
+    field), `soldDate` is epoch **milliseconds**, sold rows carry
+    `searchStatus` 4 / `mlsStatus` "Closed" (a few rows lack
+    date/status and drop out via the date rule).
+  - *Rental feed* — `…/zipcode/{zip}/filter/include=rentals,viewport=…,no-outline`.
+    Pinned contract (dataset `FQUxgZyQFdCOVJ9Z0`, 61 rows): there is
+    **no rent-specific field anywhere**, and the feed is mixed —
+    `include=rentals` adds rentals on top of the for-sale set and no
+    structural flag marks them (`listingType` 2 is FSBO, not rental).
+    A genuine rental's monthly rent sits in `price`, so rent
+    candidates are identified by a plausible monthly-rent band
+    ($300–$6,000) — the only honest signal in the rows. Redfin rental
+    coverage through this Actor is thin, so "not enough comps" is a
+    normal, surfaced outcome.
+  - *Selection* (pure, unit-tested): subject excluded (same
+    `propertyId` or same normalized street), haversine distance
+    ≤ 0.5 mi; sold comps must have sold within the past 365 days and
+    pass a turnkey screen (rows priced below 45% of the candidate
+    median $/sqft — distress/teardown territory — are dropped);
+    ranking is same-neighborhood first, then nearest, then most
+    recent (sold); beds within ±1 of the subject is a soft preference
+    applied only when ≥2 comps survive it; top 3 kept per side.
+  - *Suggestions*: market value = median $/sqft of the selected sold
+    comps × subject sqft (median sold price when sqft math is
+    unavailable); rent = median monthly rent of the selected rental
+    comps. Fewer than 2 usable comps on a side → that suggestion is
+    `null` with an explanatory note. Suggestions prefill the rent /
+    MV inputs — both stay fully editable — and the panel renders a
+    comps strip (each comp's address, price/rent, sale date,
+    distance) with a "Re-run comps" button. Results cache per subject
+    address (source `comps`, 7-day TTL) and return `cached: true`.
+- **Every expense input is editable.** Annual taxes ($), annual
+  insurance ($), monthly HOA ($), vacancy %, management %,
+  maintenance %, and capex % are all form inputs wired into the
+  turnkey calculation and recomputed on each Run. They prefill from
+  the property record when it carries a value (HOA from the listing,
+  taxes/insurance from the detail record) and otherwise start at the
+  standing defaults (vacancy 8, management 10, maintenance 8, capex
+  8). The model accepts the four rates as optional inputs
+  (`vacancyRate` / `managementRate` / `maintenanceRate` /
+  `capexRate`, fractions of gross rent); absent → the same defaults,
+  and the result's assumptions table echoes the rates actually used.
+  The v3.2 math is unchanged — inputs only.
 
 ## AI drafting cost controls
 
@@ -399,9 +482,12 @@ removes the caveat entirely.
 ## Tests
 
 ```bash
-npm test             # vitest: underwriting math (turnkey + traditional),
-                     # Gmail parsing, pipeline aggregation + map, URL
-                     # parsing, row mapping, contract matching, learning
+npm test             # vitest: underwriting math (turnkey + traditional,
+                     # incl. editable expense rates), Gmail parsing,
+                     # pipeline aggregation + map, URL parsing, row
+                     # mapping (incl. Redfin detail + fill-blanks merge),
+                     # comps selection (distance / recency / distress
+                     # screen / medians), contract matching, learning
                      # counts, AI cost controls, draft personalization
 npm run typecheck
 ```

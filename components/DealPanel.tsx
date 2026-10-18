@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { DealMode, UnderwritingResult } from "@/lib/underwriting/model";
 import type { DealPrefill } from "@/lib/deals/prefill";
 import {
@@ -13,19 +13,30 @@ import {
   createDraft,
   createOutcome,
   draftOfferAi,
+  fetchComps,
+  fetchPropertyDetail,
   fmtMoney,
   fmtPct,
   lookupListing,
   searchRedfinListings,
   verifyRentcast,
   type BlastRunDetailData,
+  type CompsResult,
   type VerifyResult,
 } from "@/components/api";
+import { fillMissingPrefill } from "@/lib/deals/prefill";
 
 /**
  * Property Workbench — the top of the page.
  * 1. Listing data: paste a Zillow/Redfin link (Apify, cache-first) or run
  *    a Redfin search and load a result card — both prefill the form.
+ *    "Run underwriting" completes the record first (cache merge + one
+ *    detail pull, cached as "apify-detail") so every field the data can
+ *    supply lands in the form, then underwrites. In Turnkey mode it
+ *    also pulls auto-comps (sold + rentals within 0.5 mi, past 12
+ *    months) whose suggested rent / MV prefill the inputs (editable).
+ *    All expense assumptions (taxes, insurance, HOA, vacancy,
+ *    management, maintenance, capex) are editable inputs.
  * 2. Underwriting for the page-level mode (Turnkey / Traditional
  *    Wholesale / Land), full transparent result with UNVERIFIED flags.
  * 3. Realtor messages: "Draft first message" (approved opener template,
@@ -78,6 +89,10 @@ type Fields = {
   annualTaxes: string;
   annualInsurance: string;
   monthlyHoa: string;
+  vacancyPct: string;
+  managementPct: string;
+  maintenancePct: string;
+  capexPct: string;
   marketValue: string;
   dom: string;
   priceCuts: string;
@@ -96,6 +111,10 @@ const EMPTY: Fields = {
   annualTaxes: "",
   annualInsurance: "",
   monthlyHoa: "",
+  vacancyPct: "8",
+  managementPct: "10",
+  maintenancePct: "8",
+  capexPct: "8",
   marketValue: "",
   dom: "",
   priceCuts: "",
@@ -173,6 +192,24 @@ export default function DealPanel({
   const [blastBusy, setBlastBusy] = useState<"all" | "selected" | null>(null);
   const [blastNote, setBlastNote] = useState<string | null>(null);
   const [blastError, setBlastError] = useState<string | null>(null);
+
+  // Auto-comps state (turnkey mode only): fetched once per loaded
+  // property; suggestions prefill the rent / MV inputs (still editable).
+  const [comps, setComps] = useState<CompsResult | null>(null);
+  const [compsBusy, setCompsBusy] = useState(false);
+  const [compsError, setCompsError] = useState<string | null>(null);
+  const compsForRef = useRef<string | null>(null);
+  const fRef = useRef(f);
+  fRef.current = f;
+  const resultRef = useRef(result);
+  resultRef.current = result;
+
+  // Fullest-record state: Run Underwriting first completes the
+  // property record (cache merge + one detail pull) so every field
+  // the data can supply lands in the form.
+  const [prepareBusy, setPrepareBusy] = useState(false);
+  const detailForRef = useRef<Set<string>>(new Set());
+  const loadedRef = useRef<DealPrefill | null>(null);
 
   // Message drafting state
   const [offerOverride, setOfferOverride] = useState("");
@@ -280,6 +317,16 @@ export default function DealPanel({
       put("annualInsurance", num(fields.annualInsurance));
       put("monthlyHoa", num(fields.monthlyHoa));
       put("marketValue", num(fields.marketValue));
+      // Editable expense rates: the form holds percents, the model
+      // takes fractions of gross rent (absent → standing defaults).
+      const putRate = (key: string, v: string) => {
+        const n = num(v);
+        if (n !== undefined) body[key] = n / 100;
+      };
+      putRate("vacancyRate", fields.vacancyPct);
+      putRate("managementRate", fields.managementPct);
+      putRate("maintenanceRate", fields.maintenancePct);
+      putRate("capexRate", fields.capexPct);
     } else if (mode === "traditional" || mode === "flip") {
       put("arv", num(fields.arv));
       put("repairEstimate", num(fields.repairEstimate));
@@ -336,6 +383,14 @@ export default function DealPanel({
       listPrice: p.listPrice !== undefined ? str(p.listPrice) : f.listPrice,
       monthlyRent:
         p.rentEstimate !== undefined ? str(p.rentEstimate) : f.monthlyRent,
+      annualTaxes:
+        p.annualTaxes !== undefined ? str(p.annualTaxes) : f.annualTaxes,
+      annualInsurance:
+        p.annualInsurance !== undefined
+          ? str(p.annualInsurance)
+          : f.annualInsurance,
+      monthlyHoa:
+        p.hoaMonthly !== undefined ? str(p.hoaMonthly) : f.monthlyHoa,
       marketValue:
         p.valueEstimate !== undefined ? str(p.valueEstimate) : f.marketValue,
       arv:
@@ -352,11 +407,68 @@ export default function DealPanel({
       yearBuilt: p.yearBuilt,
       sourceLabel,
     });
+    // Loading a property into the turnkey workbench kicks off the
+    // auto-comps pull (once per property; the strip has a re-run).
+    if (mode === "turnkey" && p.address) {
+      void fetchCompsFor(p.address);
+    }
     return next;
   }
 
+  /**
+   * Pull auto-comps for a loaded turnkey property and prefill the rent
+   * and MV inputs from the suggestions. Values stay fully editable;
+   * when a result is already on screen it is re-run against the
+   * comped inputs so the displayed numbers match the form.
+   */
+  async function fetchCompsFor(address: string, force = false) {
+    const addr = address.trim();
+    if (!addr) return;
+    if (!force && compsForRef.current === addr) return;
+    compsForRef.current = addr;
+    setCompsBusy(true);
+    setCompsError(null);
+    setComps(null);
+    try {
+      const res = await fetchComps(addr);
+      if (!res.ok) throw new Error(res.reason ?? "Comps pull failed.");
+      setComps(res);
+      if (res.suggestedRent !== null || res.suggestedMV !== null) {
+        const next: Fields = {
+          ...fRef.current,
+          monthlyRent:
+            res.suggestedRent !== null
+              ? str(res.suggestedRent)
+              : fRef.current.monthlyRent,
+          marketValue:
+            res.suggestedMV !== null
+              ? str(res.suggestedMV)
+              : fRef.current.marketValue,
+        };
+        setF(next);
+        if (resultRef.current) await runWith(next);
+      }
+    } catch (err) {
+      compsForRef.current = null; // a failed pull may be retried
+      setCompsError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCompsBusy(false);
+    }
+  }
+
   async function runLinkLookup() {
-    if (!linkUrl.trim()) return;
+    const value = linkUrl.trim();
+    if (!value) return;
+    // A place typed into the link box is the common mix-up — point at
+    // the search box instead of surfacing a parser error.
+    const looksLikeUrl =
+      /^https?:\/\//i.test(value) || /(zillow|redfin)\.com/i.test(value);
+    if (!looksLikeUrl) {
+      setLinkError(
+        "That looks like a place, not a listing link — use “Search by city or ZIP” instead.",
+      );
+      return;
+    }
     setLinkBusy(true);
     setLinkNote(null);
     setLinkError(null);
@@ -365,6 +477,7 @@ export default function DealPanel({
       if (!res.ok || !res.prefill) {
         throw new Error(res.reason ?? "Lookup failed.");
       }
+      loadedRef.current = res.prefill;
       applyPrefill(
         res.prefill,
         res.prefill.source === "redfin" ? "Redfin listing data" : "Zillow listing data",
@@ -392,7 +505,7 @@ export default function DealPanel({
   }
 
   async function runSearch() {
-    if (!searchQuery.trim()) return;
+    if (!searchQuery.trim() || searchBusy) return;
     setSearchBusy(true);
     setSearchNote(null);
     setSearchError(null);
@@ -419,9 +532,108 @@ export default function DealPanel({
     }
   }
 
+  /**
+   * The fullest record for a property: the server merges the passed
+   * record with the cached record and — when key fields are still
+   * missing — pulls the listing DETAIL record once (cached server-side
+   * as "apify-detail"). Any failure falls back to the record in hand;
+   * completing the details never blocks underwriting.
+   */
+  async function ensureFullDetails(p: DealPrefill): Promise<DealPrefill> {
+    if (!p.address) return p;
+    if (detailForRef.current.has(p.address)) return p;
+    detailForRef.current.add(p.address);
+    try {
+      const res = await fetchPropertyDetail({
+        address: p.address,
+        sourceUrl: p.sourceUrl,
+        prefill: p,
+      });
+      if (res.ok && res.prefill) {
+        return fillMissingPrefill(p, res.prefill);
+      }
+    } catch {
+      // fall through with the record we have
+    }
+    return p;
+  }
+
+  /** applyPrefill's value mapping, but only into fields still blank —
+   *  used when Run Underwriting completes the record for a property
+   *  whose form the operator may already have edited by hand. */
+  function fillBlankFields(current: Fields, p: DealPrefill): Fields {
+    const blank = (cur: string, v: number | undefined) =>
+      cur.trim() !== "" ? cur : str(v);
+    return {
+      ...current,
+      listPrice: blank(current.listPrice, p.listPrice),
+      monthlyRent: blank(current.monthlyRent, p.rentEstimate),
+      annualTaxes: blank(current.annualTaxes, p.annualTaxes),
+      annualInsurance: blank(current.annualInsurance, p.annualInsurance),
+      monthlyHoa: blank(current.monthlyHoa, p.hoaMonthly),
+      marketValue: blank(current.marketValue, p.valueEstimate),
+      arv:
+        mode === "traditional"
+          ? blank(current.arv, p.valueEstimate)
+          : current.arv,
+      dom: blank(current.dom, p.daysOnMarket),
+    };
+  }
+
   async function loadAndUnderwrite(p: DealPrefill) {
-    const next = applyPrefill(p, "Redfin search result");
-    await runWith(next);
+    loadedRef.current = p;
+    setPrepareBusy(true);
+    try {
+      const full = await ensureFullDetails(p);
+      loadedRef.current = full;
+      const next = applyPrefill(
+        full,
+        p.source === "redfin" ? "Redfin search result" : "Zillow listing data",
+      );
+      await runWith(next);
+    } finally {
+      setPrepareBusy(false);
+    }
+  }
+
+  /**
+   * The form's Run underwriting button: when the form still shows the
+   * loaded property, complete its record first (detail merge into the
+   * blank fields only) so the run has everything the data can supply;
+   * comps run for the address as well (deduped per property).
+   */
+  async function runFormUnderwriting() {
+    const addr = f.address.trim();
+    const loaded = loadedRef.current;
+    if (loaded && addr && loaded.address === addr) {
+      setPrepareBusy(true);
+      try {
+        const full = await ensureFullDetails(loaded);
+        if (full !== loaded) {
+          loadedRef.current = full;
+          const filled = fillBlankFields(f, full);
+          setF(filled);
+          if (facts === null || facts.sqft === undefined) {
+            setFacts({
+              beds: full.beds,
+              baths: full.baths,
+              sqft: full.sqft,
+              yearBuilt: full.yearBuilt,
+              sourceLabel:
+                full.source === "redfin"
+                  ? "Redfin listing data"
+                  : "Zillow listing data",
+            });
+          }
+          await runWith(filled);
+          return;
+        }
+      } finally {
+        setPrepareBusy(false);
+      }
+    }
+    await runWith(f);
+    if (mode === "turnkey" && addr) void fetchCompsFor(addr);
   }
 
   // ---------- Messages ----------
@@ -630,7 +842,7 @@ export default function DealPanel({
       <h3>Listing data</h3>
       <div className="form-grid">
         <div className="field full">
-          <label htmlFor="dp-link">Paste a Zillow or Redfin link</label>
+          <label htmlFor="dp-link">Paste a Zillow/Redfin listing link</label>
           <div className="inline-row">
             <input
               id="dp-link"
@@ -648,7 +860,7 @@ export default function DealPanel({
           </div>
         </div>
         <div className="field full">
-          <label htmlFor="dp-search">Redfin search (city, ZIP, or address)</label>
+          <label htmlFor="dp-search">Search by city or ZIP</label>
           <div className="inline-row">
             <input
               id="dp-search"
@@ -661,7 +873,9 @@ export default function DealPanel({
               onClick={() => void runSearch()}
               disabled={searchBusy || !searchQuery.trim()}
             >
-              {searchBusy ? "Searching…" : "Search Redfin"}
+              {searchBusy
+                ? "Searching Redfin — city searches can take up to a minute…"
+                : "Search Redfin"}
             </button>
           </div>
         </div>
@@ -733,9 +947,11 @@ export default function DealPanel({
                 <button
                   className="btn"
                   onClick={() => void loadAndUnderwrite(p)}
-                  disabled={uwBusy}
+                  disabled={uwBusy || prepareBusy}
                 >
-                  Run underwriting
+                  {prepareBusy
+                    ? "Loading full property details + comps…"
+                    : "Run underwriting"}
                 </button>
                 {selectionMode && onToggleListing && (
                   <label className="blast-pick">
@@ -800,6 +1016,22 @@ export default function DealPanel({
               <input id="dp-hoa" inputMode="decimal" value={f.monthlyHoa} onChange={(e) => set("monthlyHoa", e.target.value)} />
             </div>
             <div className="field">
+              <label htmlFor="dp-vacancy">Vacancy (%)</label>
+              <input id="dp-vacancy" inputMode="decimal" value={f.vacancyPct} onChange={(e) => set("vacancyPct", e.target.value)} />
+            </div>
+            <div className="field">
+              <label htmlFor="dp-mgmt">Management (%)</label>
+              <input id="dp-mgmt" inputMode="decimal" value={f.managementPct} onChange={(e) => set("managementPct", e.target.value)} />
+            </div>
+            <div className="field">
+              <label htmlFor="dp-maint">Maintenance (%)</label>
+              <input id="dp-maint" inputMode="decimal" value={f.maintenancePct} onChange={(e) => set("maintenancePct", e.target.value)} />
+            </div>
+            <div className="field">
+              <label htmlFor="dp-capex">Capex reserve (%)</label>
+              <input id="dp-capex" inputMode="decimal" value={f.capexPct} onChange={(e) => set("capexPct", e.target.value)} />
+            </div>
+            <div className="field">
               <label htmlFor="dp-dom">Days on market</label>
               <input id="dp-dom" inputMode="numeric" value={f.dom} onChange={(e) => set("dom", e.target.value)} />
             </div>
@@ -852,8 +1084,16 @@ export default function DealPanel({
         </p>
       )}
       <div className="btn-row">
-        <button className="btn" onClick={() => void runWith(f)} disabled={uwBusy}>
-          {uwBusy ? "Running…" : "Run underwriting"}
+        <button
+          className="btn"
+          onClick={() => void runFormUnderwriting()}
+          disabled={uwBusy || prepareBusy}
+        >
+          {prepareBusy
+            ? "Loading full property details + comps…"
+            : uwBusy
+              ? "Running…"
+              : "Run underwriting"}
         </button>
       </div>
       {uwError && <div className="error">{uwError}</div>}
@@ -980,6 +1220,85 @@ export default function DealPanel({
                 ))}
               </ul>
             </div>
+          )}
+        </div>
+      )}
+
+      {mode === "turnkey" && (compsBusy || comps || compsError) && (
+        <div className="comps-strip">
+          <div className="comps-head">
+            <h4>
+              Auto-comps{" "}
+              {comps?.cached && <span className="badge ok">cached</span>}
+            </h4>
+            <button
+              className="btn secondary"
+              onClick={() => void fetchCompsFor(f.address, true)}
+              disabled={compsBusy || !f.address.trim()}
+            >
+              {compsBusy ? "Pulling comps…" : "Re-run comps"}
+            </button>
+          </div>
+          {compsBusy && (
+            <p className="small">
+              Pulling sold + rental comps within 0.5 mi of this property…
+            </p>
+          )}
+          {compsError && <div className="error">{compsError}</div>}
+          {comps && (
+            <>
+              <p className="small">
+                Auto-comped from {comps.soldComps.length} sold /{" "}
+                {comps.rentComps.length} rental
+                {comps.rentComps.length === 1 ? "" : "s"} within 0.5 mi,
+                past 12 months
+                {comps.suggestedMV !== null && (
+                  <> · suggested MV {fmtMoney(comps.suggestedMV)}</>
+                )}
+                {comps.suggestedRent !== null && (
+                  <> · suggested rent {fmtMoney(comps.suggestedRent)}/mo</>
+                )}{" "}
+                — prefilled above, still editable.
+              </p>
+              {comps.soldComps.length > 0 && (
+                <ul className="comps-list">
+                  {comps.soldComps.map((c, i) => (
+                    <li key={`sold-${i}`}>
+                      <strong>Sold</strong> {c.address} —{" "}
+                      {fmtMoney(c.soldPrice)} ·{" "}
+                      {new Date(c.soldDate).toLocaleDateString()} ·{" "}
+                      {c.distanceMi.toFixed(2)} mi
+                      {c.beds !== undefined && <> · {c.beds} bd</>}
+                      {c.baths !== undefined && <> · {c.baths} ba</>}
+                      {c.sqft !== undefined && (
+                        <> · {c.sqft.toLocaleString()} sqft</>
+                      )}
+                      {c.neighborhood && <> · {c.neighborhood}</>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {comps.rentComps.length > 0 && (
+                <ul className="comps-list">
+                  {comps.rentComps.map((c, i) => (
+                    <li key={`rent-${i}`}>
+                      <strong>For rent</strong> {c.address} —{" "}
+                      {fmtMoney(c.rent)}/mo · {c.distanceMi.toFixed(2)} mi
+                      {c.beds !== undefined && <> · {c.beds} bd</>}
+                      {c.baths !== undefined && <> · {c.baths} ba</>}
+                      {c.sqft !== undefined && (
+                        <> · {c.sqft.toLocaleString()} sqft</>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {comps.notes.map((n, i) => (
+                <p className="small" key={`note-${i}`}>
+                  {n}
+                </p>
+              ))}
+            </>
           )}
         </div>
       )}

@@ -20,6 +20,23 @@ export interface DealPrefill {
    *  underwriting form, whose HOA input stays operator-entered. */
   hoaMonthly?: number;
   yearBuilt?: number;
+  /** Coordinates from the listing row (tri_angle `latLong`), when the
+   *  Actor reports them. The turnkey comps engine anchors its 0.5-mile
+   *  viewport on these; absent → the address is geocoded instead. */
+  latitude?: number;
+  longitude?: number;
+  /** Neighborhood name (tri_angle `location`), when reported. The
+   *  comps engine ranks same-neighborhood comps first. */
+  neighborhood?: string;
+  /** Redfin property id, when the row carries one. Used by the comps
+   *  engine to exclude the subject property from its own comp set. */
+  propertyId?: number;
+  /** Annual property taxes, when a (detail) source reports them.
+   *  Read defensively; absent stays absent and the calculator flags
+   *  its estimate UNVERIFIED rather than inventing a figure. */
+  annualTaxes?: number;
+  /** Annual homeowners insurance, when a source reports it. */
+  annualInsurance?: number;
   valueEstimate?: number;
   rentEstimate?: number;
   daysOnMarket?: number;
@@ -190,6 +207,19 @@ function baseFromRow(row: Raw, source: DealPrefill["source"]): DealPrefill {
       "livingAreaValue",
     ]),
     hoaMonthly: firstNum(row, ["hoa", "monthlyHoa", "hoaFee", "hoaDues"]),
+    annualTaxes: firstNum(row, [
+      "annualTaxes",
+      "taxAnnual",
+      "annualTax",
+      "propertyTaxes",
+      "taxesAnnual",
+    ]),
+    annualInsurance: firstNum(row, [
+      "annualInsurance",
+      "insuranceAnnual",
+      "homeInsurance",
+      "insurance",
+    ]),
     description: firstStr(row, ["description", "listingRemarks", "remarks"]),
     yearBuilt: firstNum(row, ["yearBuilt", "year_built"]),
     daysOnMarket: firstNum(row, [
@@ -220,7 +250,10 @@ export function mapApifyRow(row: Raw): DealPrefill {
   return out;
 }
 
-/** Redfin Actor row: Redfin Estimate where the Actor returns one. */
+/** Redfin Actor row: Redfin Estimate where the Actor returns one.
+ *  Also maps the geo fields the comps engine needs — coordinates from
+ *  the wrapped `latLong` object, the neighborhood from the wrapped
+ *  `location` string, and the flat Redfin `propertyId`. */
 export function mapRedfinRow(row: Raw): DealPrefill {
   const out = baseFromRow(row, "redfin");
   out.valueEstimate = firstNum(row, [
@@ -230,7 +263,63 @@ export function mapRedfinRow(row: Raw): DealPrefill {
     "avm",
   ]);
   out.rentEstimate = firstNum(row, ["rentEstimate", "rentZestimate"]);
+  out.latitude = firstNum(row, ["latLong.latitude", "latitude", "lat"]);
+  out.longitude = firstNum(row, ["latLong.longitude", "longitude", "lng", "lon"]);
+  out.neighborhood = firstStr(row, ["location", "neighborhood"]);
+  out.propertyId = firstNum(row, ["propertyId"]);
   return out;
+}
+
+/**
+ * Fill-blanks merge: returns a copy of `base` where every field that is
+ * undefined takes the first defined value from `fills` (in order).
+ * Existing values in `base` always win — a fresher search row is never
+ * overwritten by a staler cached/detail record; the detail record only
+ * supplies what the base record lacks.
+ */
+const PREFILL_KEYS: (keyof DealPrefill)[] = [
+  "address",
+  "city",
+  "state",
+  "zip",
+  "listPrice",
+  "beds",
+  "baths",
+  "sqft",
+  "hoaMonthly",
+  "yearBuilt",
+  "latitude",
+  "longitude",
+  "neighborhood",
+  "propertyId",
+  "annualTaxes",
+  "annualInsurance",
+  "valueEstimate",
+  "rentEstimate",
+  "daysOnMarket",
+  "sourceUrl",
+  "description",
+  "agentName",
+  "agentPhone",
+  "agentEmail",
+  "agentBrokerage",
+  "source",
+];
+
+export function fillMissingPrefill(
+  base: DealPrefill,
+  ...fills: DealPrefill[]
+): DealPrefill {
+  const out = { ...base } as Record<string, unknown>;
+  for (const fill of fills) {
+    const rec = fill as unknown as Record<string, unknown>;
+    for (const key of PREFILL_KEYS) {
+      if (out[key] === undefined && rec[key] !== undefined) {
+        out[key] = rec[key];
+      }
+    }
+  }
+  return out as unknown as DealPrefill;
 }
 
 // ---------- Redfin DETAIL rows (memo23/apify-redfin-cheerio) ----------
@@ -294,5 +383,156 @@ export function mapRedfinDetailRow(row: Raw): RedfinDetail {
     agentBrokerage: firstStr(row, ["mlsDisclaimerInfo.listingBrokerName"]),
     address,
     sourceUrl: firstStr(row, ["url"]),
+  };
+}
+
+/** Street line for a memo23 detail row: the public-records composed
+ *  string when present, else composed from the structured
+ *  `streetAddress` object (the raw page payload carries an object,
+ *  not a string). */
+function detailStreet(row: Raw): string | undefined {
+  const composed = firstStr(row, [
+    "publicRecordsInfo.addressInfo.street",
+    "streetAddress",
+    "streetLine",
+  ]);
+  if (composed) return composed;
+  const parts = asRecord(row.streetAddress);
+  if (!parts) return undefined;
+  const head = [
+    firstStr(parts, ["streetNumber"]),
+    firstStr(parts, ["directionalPrefix"]),
+    firstStr(parts, ["streetName"]),
+    firstStr(parts, ["streetType"]),
+    firstStr(parts, ["directionalSuffix"]),
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const unitValue = firstStr(parts, ["unitValue"]);
+  const unitType = firstStr(parts, ["unitType"]);
+  const unit = unitValue ? `${unitType ?? "#"}${unitValue}` : "";
+  const street = [head, unit].filter(Boolean).join(" ");
+  return street || undefined;
+}
+
+/**
+ * Full property prefill from a memo23 Redfin DETAIL row — the record
+ * behind the workbench's "fullest record" merge. Field shapes pinned
+ * from a verified live row (225 N New Jersey St, Indianapolis;
+ * dataset AaApW7NmuBmfM6neq, 2026-10-18):
+ *
+ *   priceInfo.amount .................... 325000 (list price)
+ *   listingPrice .......................... "325000_US_DOLLAR" (fallback)
+ *   numBeds / numBaths .................... 2 / 2 (flat)
+ *   sqFt .................................. { value: 1237 } (wrapped)
+ *   publicRecordsInfo.latestListingInfo ... { beds, baths, totalSqFt, yearBuilt } fallbacks
+ *   publicRecordsInfo.mortgageCalculatorInfo.monthlyHoaDues ... 485
+ *   ....homeInsuranceData.homeInsuranceYearlyEstimate ......... 1588
+ *   ....propertyTaxRate ................... 2.2024 (% of price)
+ *   publicRecordsInfo.taxInfo ............. {} — NO assessed amount on
+ *     the verified row (allTaxInfo also []), so annual taxes are
+ *     derived from the record's own county tax rate × list price —
+ *     a record-sourced estimate, never a made-up figure. A direct
+ *     amount key wins when a row carries one.
+ *   rentalEstimateInfo .................... { displayLevel, propertyId,
+ *     shouldShow } — NO rent amount on the verified row, so
+ *     rentEstimate stays absent (amount keys are read defensively for
+ *     rows that carry them). The comps engine's suggested rent is the
+ *     usual filler.
+ *   Redfin Estimate ....................... `hasAvm: true` only — the
+ *     AVM amount is not in this payload at all, so valueEstimate
+ *     stays absent (defensive keys read anyway).
+ *   latitude / longitude .................. flat numbers + latLong obj
+ */
+export function mapRedfinDetailPrefill(row: Raw): DealPrefill {
+  const detail = mapRedfinDetailRow(row);
+  const listPrice = firstNum(row, [
+    "priceInfo.amount",
+    "listingPrice",
+    "price",
+  ]);
+  const taxAmount = firstNum(row, [
+    "publicRecordsInfo.taxInfo.taxAnnualAmount",
+    "publicRecordsInfo.taxInfo.annualTaxAmount",
+    "publicRecordsInfo.taxInfo.taxAmount",
+    "publicRecordsInfo.taxInfo.amount",
+    "taxAnnualAmount",
+  ]);
+  const taxRate = firstNum(row, [
+    "publicRecordsInfo.mortgageCalculatorInfo.propertyTaxRate",
+  ]);
+  const annualTaxes =
+    taxAmount ??
+    (taxRate !== undefined && listPrice !== undefined
+      ? Math.round((taxRate / 100) * listPrice)
+      : undefined);
+  const insurance = firstNum(row, [
+    "publicRecordsInfo.mortgageCalculatorInfo.homeInsuranceData.homeInsuranceYearlyEstimate",
+  ]);
+  const street = detailStreet(row);
+  const city = firstStr(row, ["city", "cityName"]);
+  const state = firstStr(row, ["state", "stateOrProvinceCode"]);
+  const zip = firstStr(row, ["zip", "postalCode", "zipcode", "zipCode"]);
+  const addressParts = [street, city, state].filter(Boolean).join(", ");
+  const address = addressParts
+    ? zip
+      ? `${addressParts} ${zip}`
+      : addressParts
+    : detail.address;
+  return {
+    address,
+    city,
+    state,
+    zip,
+    listPrice,
+    beds: firstNum(row, [
+      "numBeds",
+      "beds",
+      "publicRecordsInfo.latestListingInfo.beds",
+    ]),
+    baths: firstNum(row, [
+      "numBaths",
+      "baths",
+      "publicRecordsInfo.latestListingInfo.baths",
+    ]),
+    sqft: firstNum(row, [
+      "sqFt",
+      "sqft",
+      "publicRecordsInfo.latestListingInfo.totalSqFt",
+    ]),
+    hoaMonthly: firstNum(row, [
+      "publicRecordsInfo.mortgageCalculatorInfo.monthlyHoaDues",
+      "hoa",
+      "monthlyHoa",
+    ]),
+    yearBuilt: firstNum(row, [
+      "yearBuilt",
+      "publicRecordsInfo.latestListingInfo.yearBuilt",
+      "publicRecordsInfo.mortgageCalculatorInfo.homeInsuranceData.yearBuilt",
+    ]),
+    latitude: firstNum(row, ["latitude", "latLong.latitude"]),
+    longitude: firstNum(row, ["longitude", "latLong.longitude"]),
+    propertyId: firstNum(row, ["propertyId"]),
+    annualTaxes,
+    annualInsurance: insurance !== undefined && insurance > 0 ? insurance : undefined,
+    valueEstimate: firstNum(row, [
+      "avmInfo.predictedValue",
+      "avmInfo.value",
+      "predictedValue",
+      "redfinEstimate",
+      "estimate",
+    ]),
+    rentEstimate: firstNum(row, [
+      "rentalEstimateInfo.predictedRent",
+      "rentalEstimateInfo.predictedMonthlyRent",
+      "rentalEstimateInfo.rentAmount",
+      "rentalEstimateInfo.amount",
+      "rentEstimate",
+    ]),
+    agentName: detail.agentName,
+    agentPhone: detail.agentPhone,
+    agentBrokerage: detail.agentBrokerage,
+    sourceUrl: detail.sourceUrl,
+    source: "redfin",
   };
 }

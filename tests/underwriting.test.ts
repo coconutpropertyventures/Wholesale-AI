@@ -93,3 +93,62 @@ describe("flip + land", () => {
     expect(gradeForFee(-1)).toBe("F");
   });
 });
+
+describe("turnkey editable expense rates", () => {
+  const base = {
+    mode: "turnkey" as const,
+    listPrice: 154900,
+    monthlyRent: 2150,
+    annualTaxes: 2400,
+    annualInsurance: 1500,
+    marketValue: 215000,
+  };
+
+  it("defaults reproduce the standing 8/10/8/8 expense load", () => {
+    const r = underwrite(base);
+    expect(r.assumptions.vacancy).toBe(0.08);
+    expect(r.assumptions.management).toBe(0.1);
+    expect(r.assumptions.maintenance).toBe(0.08);
+    expect(r.assumptions.capex).toBe(0.08);
+    expect(r.noi).toBe(13128);
+  });
+
+  it("zeroed rates remove the whole expense load from NOI", () => {
+    const r = underwrite({
+      ...base,
+      vacancyRate: 0,
+      managementRate: 0,
+      maintenanceRate: 0,
+      capexRate: 0,
+    });
+    // gross 25,800 - 2,400 taxes - 1,500 insurance = 21,900
+    expect(r.noi).toBe(21900);
+    expect(r.assumptions.vacancy).toBe(0);
+    expect(r.assumptions.management).toBe(0);
+  });
+
+  it("a partial override changes only that rate", () => {
+    const r = underwrite({ ...base, managementRate: 0.05 });
+    // load = 8 + 5 + 8 + 8 = 29% -> NOI = 25,800 x 0.71 - 3,900 = 14,418
+    expect(r.noi).toBe(14418);
+    expect(r.assumptions.management).toBe(0.05);
+    expect(r.assumptions.vacancy).toBe(0.08);
+    expect(r.explanation[0]).toContain("5% management");
+    expect(r.explanation[0]).toContain("8% vacancy");
+  });
+
+  it("edited taxes / insurance / HOA flow through as supplied dollars", () => {
+    const r = underwrite({
+      ...base,
+      annualTaxes: 5000,
+      annualInsurance: 2400,
+      monthlyHoa: 100,
+    });
+    // NOI = 17,028 - 5,000 - 2,400 - 1,200 = 8,428
+    expect(r.noi).toBe(8428);
+    expect(r.assumptions.annualTaxes).toBe(5000);
+    expect(r.assumptions.annualInsurance).toBe(2400);
+    expect(r.unverified).not.toContain("annualTaxes");
+    expect(r.unverified).not.toContain("annualInsurance");
+  });
+});

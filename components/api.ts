@@ -432,6 +432,98 @@ export async function verifyRentcast(address: string): Promise<VerifyResult> {
   };
 }
 
+// ---------- Full property detail (fullest-record merge) ----------
+
+export interface PropertyDetailResult {
+  ok: boolean;
+  configured?: boolean;
+  detailFetched?: boolean;
+  prefill?: DealPrefill;
+  reason?: string;
+}
+
+export async function fetchPropertyDetail(payload: {
+  address: string;
+  sourceUrl?: string;
+  prefill?: DealPrefill;
+}): Promise<PropertyDetailResult> {
+  const rec = await postJson("/api/deals/detail", {
+    address: payload.address,
+    sourceUrl: payload.sourceUrl,
+    prefill: payload.prefill,
+  });
+  if (!rec) return { ok: false, reason: "Detail lookup returned no response." };
+  return {
+    ok: rec.ok === true,
+    configured: typeof rec.configured === "boolean" ? rec.configured : undefined,
+    detailFetched: rec.detailFetched === true,
+    prefill: rec.prefill ? (rec.prefill as DealPrefill) : undefined,
+    reason: str(rec.reason),
+  };
+}
+
+// ---------- Turnkey auto-comps ----------
+
+export interface SoldCompData {
+  address: string;
+  soldPrice: number;
+  soldDate: string;
+  distanceMi: number;
+  beds?: number;
+  baths?: number;
+  sqft?: number;
+  neighborhood?: string;
+}
+
+export interface RentCompData {
+  address: string;
+  rent: number;
+  distanceMi: number;
+  beds?: number;
+  baths?: number;
+  sqft?: number;
+}
+
+export interface CompsResult {
+  ok: boolean;
+  configured?: boolean;
+  cached?: boolean;
+  soldComps: SoldCompData[];
+  rentComps: RentCompData[];
+  suggestedRent: number | null;
+  suggestedMV: number | null;
+  notes: string[];
+  reason?: string;
+}
+
+export async function fetchComps(address: string): Promise<CompsResult> {
+  const rec = await postJson("/api/deals/comps", { address });
+  if (!rec) {
+    return {
+      ok: false,
+      soldComps: [],
+      rentComps: [],
+      suggestedRent: null,
+      suggestedMV: null,
+      notes: [],
+      reason: "Comps returned no response.",
+    };
+  }
+  return {
+    ok: rec.ok === true,
+    configured: typeof rec.configured === "boolean" ? rec.configured : undefined,
+    cached: rec.cached === true,
+    soldComps: pickArray(rec, "soldComps") as SoldCompData[],
+    rentComps: pickArray(rec, "rentComps") as RentCompData[],
+    suggestedRent: typeof rec.suggestedRent === "number" ? rec.suggestedRent : null,
+    suggestedMV: typeof rec.suggestedMV === "number" ? rec.suggestedMV : null,
+    notes: (pickArray(rec, "notes") as unknown[]).filter(
+      (n): n is string => typeof n === "string",
+    ),
+    reason: str(rec.reason),
+  };
+}
+
 // ---------- Message outcomes + AI drafting ----------
 
 export interface OutcomesData {

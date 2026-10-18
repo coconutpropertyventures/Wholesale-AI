@@ -33,6 +33,13 @@ export interface UnderwritingInputs {
   landCompValue?: number;         // land mode: comparable land value
   targetFee?: number;             // default 15000
   targetCapRate?: number;         // default 0.05
+  /** Turnkey expense-rate overrides (fractions of gross rent). Each
+   *  defaults to the standing rate in DEFAULTS when absent — the form
+   *  exposes all four as editable inputs; the math is unchanged. */
+  vacancyRate?: number;           // default 0.08
+  managementRate?: number;        // default 0.10
+  maintenanceRate?: number;       // default 0.08
+  capexRate?: number;             // default 0.08
 }
 
 export interface UnderwritingResult {
@@ -95,9 +102,17 @@ function underwriteTurnkey(inp: UnderwritingInputs): UnderwritingResult {
   if (!inp.annualInsurance) unverified.push("annualInsurance");
   const hoa = (inp.monthlyHoa ?? 0) * 12;
 
+  // Expense rates are operator-editable inputs; absent → the standing
+  // defaults. The NOI formula itself is unchanged.
+  const vacancy = inp.vacancyRate ?? DEFAULTS.vacancy;
+  const management = inp.managementRate ?? DEFAULTS.management;
+  const maintenance = inp.maintenanceRate ?? DEFAULTS.maintenance;
+  const capex = inp.capexRate ?? DEFAULTS.capex;
+  const pctLabel = (r: number) => `${Number((r * 100).toFixed(2))}%`;
+
   // Full NOI: vacancy, management, maintenance, capex are % of gross rent.
   const noi =
-    grossAnnual * (1 - DEFAULTS.vacancy - DEFAULTS.management - DEFAULTS.maintenance - DEFAULTS.capex)
+    grossAnnual * (1 - vacancy - management - maintenance - capex)
     - taxes - insurance - hoa;
 
   const noiOnlyCeiling = cap > 0 ? noi / cap : 0;
@@ -144,13 +159,12 @@ function underwriteTurnkey(inp: UnderwritingInputs): UnderwritingResult {
     modeledContract,
     initialOffer,
     assumptions: {
-      vacancy: DEFAULTS.vacancy, management: DEFAULTS.management,
-      maintenance: DEFAULTS.maintenance, capex: DEFAULTS.capex,
+      vacancy, management, maintenance, capex,
       targetCapRate: cap, targetFee: fee, annualTaxes: taxes, annualInsurance: insurance
     },
     unverified,
     explanation: [
-      `NOI $${Math.round(noi).toLocaleString()} at $${rent.toLocaleString()}/mo rent with 8% vacancy, 10% management, 8% maintenance, 8% capex.`,
+      `NOI $${Math.round(noi).toLocaleString()} at $${rent.toLocaleString()}/mo rent with ${pctLabel(vacancy)} vacancy, ${pctLabel(management)} management, ${pctLabel(maintenance)} maintenance, ${pctLabel(capex)} capex.`,
       `Buyer ceiling = min(NOI / ${(cap * 100).toFixed(0)}% = $${Math.round(noiOnlyCeiling).toLocaleString()}, list − 5% = $${Math.round(listCap).toLocaleString()}) = $${Math.round(ceiling).toLocaleString()} — bound by ${ceilingBinding}.${inp.marketValue ? ` MV $${inp.marketValue.toLocaleString()} is reference only (not a ceiling term).` : ""}`,
       `MAO = min(ceiling - $${fee.toLocaleString()} fee, list $${inp.listPrice.toLocaleString()}) = $${Math.round(mao).toLocaleString()}.`,
       `Initial offer = list - 10% = $${initialOffer.toLocaleString()}, made after intake answers are in. Fee at that offer $${assignmentFee.toLocaleString()}, grade ${gradeForFee(assignmentFee)}.${initialOffer > mao ? ` Opener exceeds MAO ($${Math.round(mao).toLocaleString()}) — suggested contract is capped at MAO; override from the calculator advised.` : ""}`,

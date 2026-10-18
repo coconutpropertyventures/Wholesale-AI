@@ -21,6 +21,10 @@ const OPTIONAL_NUMBERS = [
   "landCompValue",
   "targetFee",
   "targetCapRate",
+  "vacancyRate",
+  "managementRate",
+  "maintenanceRate",
+  "capexRate",
 ] as const;
 
 function bad(message: string) {
