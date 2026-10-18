@@ -79,9 +79,13 @@ async function ghlFetch(
     }
   }
   if (!res.ok) {
-    const msg =
-      (parsed as { message?: string } | undefined)?.message ??
-      `HighLevel API error ${res.status}`;
+    // Include HighLevel's own response body (first ~200 chars) so error
+    // surfaces downstream — blast item errors, audit logs — show the
+    // actual reason instead of a bare status code.
+    const snippet = text.replace(/\s+/g, " ").trim().slice(0, 200);
+    const msg = snippet
+      ? `HighLevel API error ${res.status}: ${snippet}`
+      : `HighLevel API error ${res.status}`;
     throw new GhlApiError(res.status, msg);
   }
   return parsed;
@@ -487,10 +491,15 @@ export function toE164Phone(phone?: string): string | undefined {
 }
 
 /**
- * Canonical-contact lookup by phone: HighLevel search by the digits,
- * then an exact normalized-digit match among the results. Returns null
- * when no contact carries that number — callers create one instead of
- * ever duplicating a realtor.
+ * Canonical-contact lookup by phone. Uses GET /contacts/lookup with the
+ * number in E.164 form — v2's /contacts/search is POST-only, so a GET
+ * against it 400s before any contact work happens (diagnosed live
+ * 2026-10-18: blast agent resolution died there with a bare 400 while
+ * the same payload created fine once lookup replaced search). Lookup
+ * can return near matches, so results still go through an exact
+ * normalized-digit equality check. Returns null when no contact carries
+ * that number — callers create one instead of ever duplicating a
+ * realtor. Lookup errors throw; there is no silent fallback.
  */
 export async function findContactByPhone(
   locationId: string,
@@ -498,8 +507,11 @@ export async function findContactByPhone(
 ): Promise<Contact | null> {
   const target = normalizePhoneDigits(phone);
   if (target.length < 7) return null;
-  const qs = new URLSearchParams({ locationId, query: target });
-  const data = (await ghlFetch(`/contacts/search?${qs.toString()}`)) as {
+  const qs = new URLSearchParams({
+    locationId,
+    phone: toE164Phone(phone) ?? phone,
+  });
+  const data = (await ghlFetch(`/contacts/lookup?${qs.toString()}`)) as {
     contacts?: Raw[];
   };
   const matches = (data.contacts ?? [])
