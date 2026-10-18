@@ -719,6 +719,9 @@ export async function createBlastRun(payload: {
   properties?: unknown[];
   scriptKey: string;
   dailyCap?: number;
+  /** "Send to all": create the run already approved (engine starts on
+   *  the next tick). Omit for the review path (draft → Approve click). */
+  autoApprove?: boolean;
 }): Promise<BlastRunDetailData> {
   const raw = await postJsonOrThrow("/api/blast/runs", payload);
   const detail = normalizeBlastDetail(raw);
@@ -734,6 +737,109 @@ export async function blastRunAction(
   const detail = normalizeBlastDetail(raw);
   if (!detail) throw new Error(`Blast ${action} returned no run.`);
   return detail;
+}
+
+// ---------- Thread send (per-thread "Send" button) + AI reply drafting ---
+
+/** Approve a draft via the drafts API (PATCH). Throws on failure. */
+export async function approveDraft(id: string): Promise<void> {
+  const res = await fetch("/api/ghl/drafts", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id, status: "approved" }),
+  });
+  const data: unknown = await res.json().catch(() => null);
+  if (!res.ok) {
+    const msg =
+      (data as { error?: string } | null)?.error ??
+      `Draft approval failed (${res.status})`;
+    throw new Error(msg);
+  }
+}
+
+export interface ThreadSendResult {
+  ok: boolean;
+  outcome?: string;
+  error?: string;
+}
+
+/**
+ * Send an approved draft through POST /api/ghl/send — the same
+ * endpoint DraftsPanel's "Send now" uses. Never throws for a blocked
+ * send: the send path's refusal (suppression, live DND re-check, …)
+ * comes back as { ok: false, error } so the composer can show the
+ * reason inline and keep Bradley's text.
+ */
+export async function sendDraftById(id: string): Promise<ThreadSendResult> {
+  const res = await fetch("/api/ghl/send", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ draftId: id }),
+  });
+  const data: unknown = await res.json().catch(() => null);
+  const rec = asRecord(data);
+  return {
+    ok: rec?.ok === true,
+    outcome: str(rec?.outcome),
+    error: str(rec?.error) ?? (res.ok ? undefined : `Send failed (${res.status})`),
+  };
+}
+
+/**
+ * The per-thread Send chain: create a Draft from the composer text,
+ * approve it, then send it. Bradley typing the text and pressing Send
+ * IS the approval — but the send still flows through the single
+ * approval-gated path (lib/comms/send.ts: suppression + live DND
+ * checks intact). There is no other send route for thread messages.
+ */
+export async function sendThreadMessage(
+  payload: CreateDraftPayload,
+): Promise<ThreadSendResult> {
+  try {
+    const draft = await createDraft(payload);
+    await approveDraft(draft.id);
+    return await sendDraftById(draft.id);
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export interface AiDraftReplyResult {
+  ok: boolean;
+  configured?: boolean;
+  text?: string;
+  model?: string;
+  /** "haiku" | "sonnet" — which tier drafted it (chip label). */
+  modelTier?: string;
+  /** Model-selection reason, e.g. "routine pre-deal communication". */
+  reason?: string;
+  error?: string;
+}
+
+/** POST /api/ai/draft-reply — fills the composer, never sends. */
+export async function draftReplyAi(payload: {
+  feed: "ghl" | "gmail";
+  conversationId: string;
+  contactId?: string;
+  note?: string;
+}): Promise<AiDraftReplyResult> {
+  const rec = await postJson(
+    "/api/ai/draft-reply",
+    payload as unknown as Record<string, unknown>,
+  );
+  if (!rec) return { ok: false, error: "AI drafting returned no response." };
+  return {
+    ok: rec.ok === true,
+    configured: typeof rec.configured === "boolean" ? rec.configured : undefined,
+    text: str(rec.text),
+    model: str(rec.model),
+    modelTier: str(rec.modelTier),
+    reason: str(rec.reason),
+    error: str(rec.error),
+  };
 }
 
 // ---------- Formatting ----------

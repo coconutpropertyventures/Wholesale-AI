@@ -48,10 +48,15 @@ export default function BlastPanel({
   pipelineMap,
   selectedListings,
   onClearSelection,
+  focusRun,
 }: {
   pipelineMap: PipelineMapData | null;
   selectedListings: DealPrefill[];
   onClearSelection: () => void;
+  /** A run just built from the workbench toolbar ("Send to all" /
+   *  "Create blast from selected") — open it here and scroll the
+   *  panel into view so Bradley lands on its preview + counts. */
+  focusRun?: { id: string; nonce: number } | null;
 }) {
   const [source, setSource] = useState<"search" | "stage">("search");
   const [stageValue, setStageValue] = useState<string>(defaultStageValue);
@@ -70,6 +75,8 @@ export default function BlastPanel({
   useEffect(() => {
     detailIdRef.current = detail?.run.id ?? null;
   }, [detail]);
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const lastFocusNonce = useRef(0);
 
   const refreshRuns = useCallback(async () => {
     try {
@@ -106,6 +113,24 @@ export default function BlastPanel({
       }
     })();
   }, [refreshRuns]);
+
+  // Workbench toolbar focus: a run was just created up in the
+  // DealPanel ("Send to all" / "Create blast from selected"). Reload
+  // the run list, open that run's preview, and scroll here.
+  useEffect(() => {
+    if (!focusRun || focusRun.nonce === lastFocusNonce.current) return;
+    lastFocusNonce.current = focusRun.nonce;
+    void (async () => {
+      await refreshRuns();
+      await openRun(focusRun.id);
+      sectionRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    })();
+    // openRun is a stable component-local function; nonce gates re-runs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRun, refreshRuns]);
 
   // Poll progress while the open run is live. Display only — the run
   // itself executes server-side and does not depend on this tab.
@@ -204,7 +229,7 @@ export default function BlastPanel({
   const counts = detail?.counts;
 
   return (
-    <section className="panel blast-panel">
+    <section className="panel blast-panel" ref={sectionRef}>
       <div className="panel-head">
         <h2>Blast — text listing agents</h2>
         {run && <span className={`badge blast-status-${run.status}`}>{run.status}</span>}

@@ -4,12 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import type { Conversation, ConversationMessage, Feed } from "@/lib/types";
 import {
   createDraft,
+  draftReplyAi,
   fetchConversationMessages,
   fetchConversations,
   fetchGmailConversations,
   fetchGmailStatus,
   fetchGmailThread,
   fmtDate,
+  sendThreadMessage,
   type GmailStatus,
   type PipelineMapData,
   type PipelineMapEntry,
@@ -34,7 +36,14 @@ import { sortMessagesAscending } from "@/lib/messages";
  * - Gmail tab: same two-pane bubble layout. The list shows threads
  *   (sender, snippet, time, blue unread dot); the thread header shows
  *   the email subject and bubbles use a wider max-width for email
- *   bodies. Reply saves a draft, same as GHL.
+ *   bodies.
+ * Under each thread's composer sit two actions: "Send" (creates a
+ * Draft, approves it, and sends it through the one approval-gated
+ * send path — typing the text and pressing Send IS the approval) and
+ * "Draft with AI" (fills the composer from POST /api/ai/draft-reply,
+ * never auto-sends; the model used — Haiku or Sonnet — is chosen by
+ * context in lib/ai/modelSelect.ts and shown as a chip). "Save draft"
+ * remains for the review-queue flow.
  * Thread messages always render oldest → newest with the newest
  * pinned to the bottom (auto-scroll on open/append), while the
  * conversation lists themselves stay most-recent-activity first.
@@ -112,6 +121,62 @@ function PipelineBadges({
   );
 }
 
+export interface AiChip {
+  tier: string; // "haiku" | "sonnet"
+  reason: string;
+}
+
+/**
+ * The per-thread action stack under the composer: Send on its own
+ * row, "Draft with AI" under it, then the model chip / AI error.
+ * Shared by the GHL and Gmail panes.
+ */
+function ThreadActions({
+  canSend,
+  sendBusy,
+  aiBusy,
+  chip,
+  error,
+  onSend,
+  onDraftWithAi,
+}: {
+  canSend: boolean;
+  sendBusy: boolean;
+  aiBusy: boolean;
+  chip: AiChip | null;
+  /** Inline error slot (AI-drafting failures; Gmail also routes its
+   *  blocked-send reason here). */
+  error: string | null;
+  onSend: () => void;
+  onDraftWithAi: () => void;
+}) {
+  return (
+    <div className="thread-actions">
+      <div>
+        <button
+          className="btn primary"
+          disabled={!canSend || sendBusy}
+          onClick={onSend}
+        >
+          {sendBusy ? "Sending…" : "Send"}
+        </button>
+      </div>
+      <div>
+        <button className="btn" disabled={aiBusy} onClick={onDraftWithAi}>
+          {aiBusy ? "Drafting…" : "Draft with AI"}
+        </button>
+      </div>
+      {chip && (
+        <p className="small model-note">
+          Drafted with {chip.tier === "sonnet" ? "Sonnet" : "Haiku"}
+          {chip.reason ? ` — ${chip.reason}` : ""}
+        </p>
+      )}
+      {error && <div className="error model-note">{error}</div>}
+    </div>
+  );
+}
+
 function Bubbles({
   messages,
   demo,
@@ -162,6 +227,10 @@ export default function Inbox({
   const [replyNote, setReplyNote] = useState<string | null>(null);
   const [replyError, setReplyError] = useState<string | null>(null);
   const [replyBusy, setReplyBusy] = useState(false);
+  const [sendBusy, setSendBusy] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiChip, setAiChip] = useState<AiChip | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
   const replyRef = useRef<HTMLTextAreaElement | null>(null);
   const focusReplyOnSelect = useRef(false);
   const threadScrollRef = useRef<HTMLDivElement | null>(null);
@@ -189,6 +258,10 @@ export default function Inbox({
   const [gmailReplyNote, setGmailReplyNote] = useState<string | null>(null);
   const [gmailError, setGmailError] = useState<string | null>(null);
   const [gmailReplyBusy, setGmailReplyBusy] = useState(false);
+  const [gmailSendBusy, setGmailSendBusy] = useState(false);
+  const [gmailAiBusy, setGmailAiBusy] = useState(false);
+  const [gmailAiChip, setGmailAiChip] = useState<AiChip | null>(null);
+  const [gmailActionError, setGmailActionError] = useState<string | null>(null);
   const gmailReplyRef = useRef<HTMLTextAreaElement | null>(null);
   const focusGmailReplyOnSelect = useRef(false);
   const gmailThreadScrollRef = useRef<HTMLDivElement | null>(null);
@@ -332,6 +405,8 @@ export default function Inbox({
     setSelectedId(c.id);
     setReplyNote(null);
     setReplyError(null);
+    setAiChip(null);
+    setAiError(null);
     if (c.messages && c.messages.length > 0) {
       setMessages(sortMessagesAscending(c.messages));
       return;
@@ -381,6 +456,70 @@ export default function Inbox({
     }
   }
 
+  /**
+   * Per-thread Send: create a Draft from the composer text, approve
+   * it, send it — one chain through the approval-gated send path
+   * (sendThreadMessage in components/api.ts). On a blocked send the
+   * reason shows inline and the composer text stays.
+   */
+  async function sendReplyNow() {
+    if (!selected || replyBody.trim().length === 0) return;
+    setSendBusy(true);
+    setReplyNote(null);
+    setReplyError(null);
+    const res = await sendThreadMessage({
+      feed: "ghl",
+      contactId: selected.contactId,
+      body: replyBody,
+    });
+    setSendBusy(false);
+    if (res.ok) {
+      setReplyBody("");
+      setAiChip(null);
+      setReplyNote("Sent.");
+      window.dispatchEvent(new Event("drafts:refresh"));
+      try {
+        setMessages(
+          sortMessagesAscending(await fetchConversationMessages(selected.id)),
+        );
+      } catch {
+        // Thread refresh is best-effort; the send already landed.
+      }
+    } else {
+      setReplyError(res.error ?? "Send was blocked.");
+    }
+  }
+
+  /** Per-thread "Draft with AI": fills the composer, never sends. */
+  async function draftReplyWithAi() {
+    if (!selected) return;
+    setAiBusy(true);
+    setAiError(null);
+    const res = await draftReplyAi({
+      feed: "ghl",
+      conversationId: selected.id,
+      contactId: selected.contactId,
+    });
+    setAiBusy(false);
+    if (res.ok && res.text) {
+      setReplyBody(res.text);
+      setAiChip({
+        tier:
+          res.modelTier ??
+          (res.model?.toLowerCase().includes("sonnet") ? "sonnet" : "haiku"),
+        reason: res.reason ?? "",
+      });
+      replyRef.current?.focus();
+    } else {
+      setAiChip(null);
+      setAiError(
+        res.configured === false
+          ? "AI reply drafting isn't configured on the server (no Anthropic key). Replies have no template fallback — write the reply yourself, or use Save draft."
+          : (res.error ?? "AI drafting failed."),
+      );
+    }
+  }
+
   async function createBulkDrafts() {
     const targets = conversations.filter((c) => checked.has(c.id));
     if (targets.length === 0 || bulkBody.trim().length === 0) return;
@@ -427,6 +566,8 @@ export default function Inbox({
     setGmailSelected(c);
     setGmailReplyNote(null);
     setGmailError(null);
+    setGmailAiChip(null);
+    setGmailActionError(null);
     setGmailMessages([]);
     setGmailSubject(undefined);
     setGmailMessagesLoading(true);
@@ -442,16 +583,20 @@ export default function Inbox({
     }
   }
 
+  function gmailReplySubject(): string {
+    return gmailSubject
+      ? gmailSubject.toLowerCase().startsWith("re:")
+        ? gmailSubject
+        : `Re: ${gmailSubject}`
+      : "Re:";
+  }
+
   async function saveGmailReplyDraft() {
     if (!gmailSelected || gmailReplyBody.trim().length === 0) return;
     setGmailReplyBusy(true);
     setGmailReplyNote(null);
     setGmailError(null);
-    const subject = gmailSubject
-      ? gmailSubject.toLowerCase().startsWith("re:")
-        ? gmailSubject
-        : `Re: ${gmailSubject}`
-      : "Re:";
+    const subject = gmailReplySubject();
     try {
       await createDraft({
         feed: "gmail",
@@ -468,6 +613,67 @@ export default function Inbox({
       setGmailError(err instanceof Error ? err.message : String(err));
     } finally {
       setGmailReplyBusy(false);
+    }
+  }
+
+  /** Gmail per-thread Send — same create → approve → send chain. */
+  async function sendGmailNow() {
+    if (!gmailSelected || gmailReplyBody.trim().length === 0) return;
+    setGmailSendBusy(true);
+    setGmailReplyNote(null);
+    setGmailActionError(null);
+    const res = await sendThreadMessage({
+      feed: "gmail",
+      contactId: gmailSelected.contactId,
+      to: gmailSelected.contactId,
+      subject: gmailReplySubject(),
+      threadRef: gmailSelected.id,
+      body: gmailReplyBody,
+    });
+    setGmailSendBusy(false);
+    if (res.ok) {
+      setGmailReplyBody("");
+      setGmailAiChip(null);
+      setGmailReplyNote("Sent.");
+      window.dispatchEvent(new Event("drafts:refresh"));
+      try {
+        const data = await fetchGmailThread(gmailSelected.id);
+        setGmailMessages(sortMessagesAscending(data.messages));
+      } catch {
+        // Thread refresh is best-effort; the send already landed.
+      }
+    } else {
+      setGmailActionError(res.error ?? "Send was blocked.");
+    }
+  }
+
+  /** Gmail "Draft with AI": fills the composer, never sends. */
+  async function draftGmailWithAi() {
+    if (!gmailSelected) return;
+    setGmailAiBusy(true);
+    setGmailActionError(null);
+    const res = await draftReplyAi({
+      feed: "gmail",
+      conversationId: gmailSelected.id,
+      contactId: gmailSelected.contactId,
+    });
+    setGmailAiBusy(false);
+    if (res.ok && res.text) {
+      setGmailReplyBody(res.text);
+      setGmailAiChip({
+        tier:
+          res.modelTier ??
+          (res.model?.toLowerCase().includes("sonnet") ? "sonnet" : "haiku"),
+        reason: res.reason ?? "",
+      });
+      gmailReplyRef.current?.focus();
+    } else {
+      setGmailAiChip(null);
+      setGmailActionError(
+        res.configured === false
+          ? "AI reply drafting isn't configured on the server (no Anthropic key). Replies have no template fallback — write the reply yourself, or use Save draft."
+          : (res.error ?? "AI drafting failed."),
+      );
     }
   }
 
@@ -536,8 +742,9 @@ export default function Inbox({
             <div>
               <p className="small">
                 Connected as {gmailStatus.email ?? "your Google account"}.
-                Click a thread to read it, then save a reply as a draft —
-                sending still goes through the approval queue.
+                Click a thread to read it — then Send a reply (through
+                the same approval-gated send path), draft it with AI, or
+                save it as a draft for the review queue.
               </p>
               {gmailLoading ? (
                 <p className="muted">Loading mail…</p>
@@ -627,7 +834,7 @@ export default function Inbox({
                             rows={1}
                             value={gmailReplyBody}
                             onChange={(e) => setGmailReplyBody(e.target.value)}
-                            placeholder={`Reply to ${gmailSelected.contactName ?? "this thread"}… (saved as a draft)`}
+                            placeholder={`Reply to ${gmailSelected.contactName ?? "this thread"}…`}
                           />
                           <button
                             className="btn composer-btn"
@@ -645,6 +852,15 @@ export default function Inbox({
                             </p>
                           )}
                         </div>
+                        <ThreadActions
+                          canSend={gmailReplyBody.trim().length > 0}
+                          sendBusy={gmailSendBusy}
+                          aiBusy={gmailAiBusy}
+                          chip={gmailAiChip}
+                          error={gmailActionError}
+                          onSend={() => void sendGmailNow()}
+                          onDraftWithAi={() => void draftGmailWithAi()}
+                        />
                       </>
                     )}
                   </div>
@@ -787,27 +1003,38 @@ export default function Inbox({
                       <Bubbles messages={messages} demo={demo} />
                     </div>
                     {!demo && (
-                      <div className="composer">
-                        <textarea
-                          ref={replyRef}
-                          className="composer-input"
-                          rows={1}
-                          value={replyBody}
-                          onChange={(e) => setReplyBody(e.target.value)}
-                          placeholder={`Message ${selected.contactName ?? "this contact"}… (saved as a draft)`}
+                      <>
+                        <div className="composer">
+                          <textarea
+                            ref={replyRef}
+                            className="composer-input"
+                            rows={1}
+                            value={replyBody}
+                            onChange={(e) => setReplyBody(e.target.value)}
+                            placeholder={`Message ${selected.contactName ?? "this contact"}…`}
+                          />
+                          <button
+                            className="btn composer-btn"
+                            disabled={replyBusy || replyBody.trim().length === 0}
+                            onClick={() => void saveReplyDraft()}
+                          >
+                            Save draft
+                          </button>
+                          {replyNote && <p className="small composer-note">{replyNote}</p>}
+                          {replyError && (
+                            <div className="error composer-note">{replyError}</div>
+                          )}
+                        </div>
+                        <ThreadActions
+                          canSend={replyBody.trim().length > 0}
+                          sendBusy={sendBusy}
+                          aiBusy={aiBusy}
+                          chip={aiChip}
+                          error={aiError}
+                          onSend={() => void sendReplyNow()}
+                          onDraftWithAi={() => void draftReplyWithAi()}
                         />
-                        <button
-                          className="btn composer-btn"
-                          disabled={replyBusy || replyBody.trim().length === 0}
-                          onClick={() => void saveReplyDraft()}
-                        >
-                          Save draft
-                        </button>
-                        {replyNote && <p className="small composer-note">{replyNote}</p>}
-                        {replyError && (
-                          <div className="error composer-note">{replyError}</div>
-                        )}
-                      </div>
+                      </>
                     )}
                   </>
                 )}

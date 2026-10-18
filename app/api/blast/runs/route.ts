@@ -12,8 +12,12 @@ import type { BlastScriptKey, BlastSource } from "@/lib/types";
 export const dynamic = "force-dynamic";
 
 // GET /api/blast/runs -> { configured, runs: [{ run, counts, sentToday }] }
-// POST /api/blast/runs { source, stageRef?, properties?, scriptKey, dailyCap? }
+// POST /api/blast/runs { source, stageRef?, properties?, scriptKey, dailyCap?, autoApprove? }
 //   -> builds a DRAFT run (nothing sends; approval is a separate click).
+//   With autoApprove: true (the workbench "Send to all" button — the
+//   click is Bradley's send instruction for that list) the run is
+//   created already approved and the engine starts it on the next
+//   tick; safety exclusions and pacing rails are unchanged.
 
 export async function GET() {
   const runs = await listBlastRuns();
@@ -62,6 +66,7 @@ export async function POST(req: NextRequest) {
     typeof body.dailyCap === "number" && body.dailyCap > 0
       ? Math.floor(body.dailyCap)
       : undefined;
+  const autoApprove = body.autoApprove === true;
   try {
     const detail = await buildBlastRun({
       source: source as BlastSource,
@@ -69,6 +74,7 @@ export async function POST(req: NextRequest) {
       properties,
       scriptKey,
       dailyCap,
+      autoApprove,
     });
     return NextResponse.json({ ok: true, configured: true, ...detail });
   } catch (err) {

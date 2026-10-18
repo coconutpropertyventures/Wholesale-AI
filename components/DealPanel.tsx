@@ -9,6 +9,7 @@ import {
   personalize,
 } from "@/lib/comms/scripts";
 import {
+  createBlastRun,
   createDraft,
   createOutcome,
   draftOfferAi,
@@ -17,6 +18,7 @@ import {
   lookupListing,
   searchRedfinListings,
   verifyRentcast,
+  type BlastRunDetailData,
   type VerifyResult,
 } from "@/components/api";
 
@@ -29,8 +31,15 @@ import {
  * 3. Realtor messages: "Draft first message" (approved opener template,
  *    NO offer number) and "Draft offer message" (after intake; template
  *    or AI-personalized). Saving creates a Draft + a learning-loop
- *    outcome row. Nothing sends from this panel.
- * 4. RentCast verification — visible only when the deal is marked under
+ *    outcome row.
+ * 4. Results toolbar (above the Zillow/Redfin result cards): "Send to
+ *    all" builds a blast run from the whole result list with the
+ *    turnkey opener and auto-approves it — the click is Bradley's
+ *    explicit send instruction for that list; the blast engine's
+ *    exclusions and pacing rails still apply. "Select properties"
+ *    toggles the per-card blast checkboxes; the selected set builds a
+ *    review-path run (draft, approved in the Blast panel).
+ * 5. RentCast verification — visible only when the deal is marked under
  *    contract; the server enforces the gate regardless.
  */
 
@@ -131,12 +140,16 @@ export default function DealPanel({
   mode,
   selectedListings = [],
   onToggleListing,
+  onBlastRunCreated,
 }: {
   mode: DealMode;
   /** Workbench properties checked for a blast run (page-level state,
    *  shared with the Blast panel). Identity is the property address. */
   selectedListings?: DealPrefill[];
   onToggleListing?: (property: DealPrefill, checked: boolean) => void;
+  /** A blast run was just built from the results (either path) — the
+   *  page scrolls to / focuses the Blast panel on it. */
+  onBlastRunCreated?: (detail: BlastRunDetailData) => void;
 }) {
   const [f, setF] = useState<Fields>(EMPTY);
   const [result, setResult] = useState<UnderwritingResult | null>(null);
@@ -154,6 +167,12 @@ export default function DealPanel({
   const [searchNote, setSearchNote] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [searchResults, setSearchResults] = useState<DealPrefill[]>([]);
+
+  // Results toolbar (blast) state
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [blastBusy, setBlastBusy] = useState<"all" | "selected" | null>(null);
+  const [blastNote, setBlastNote] = useState<string | null>(null);
+  const [blastError, setBlastError] = useState<string | null>(null);
 
   // Message drafting state
   const [offerOverride, setOfferOverride] = useState("");
@@ -184,6 +203,63 @@ export default function DealPanel({
       set("street", f.address.split(",")[0].trim());
     } else if (!f.street.trim()) {
       set("street", f.address.trim());
+    }
+  }
+
+  // ---------- Results toolbar: blast from the result list ----------
+
+  /**
+   * "Send to all" — build a blast run from EVERY property in the
+   * current result list with the turnkey opener and auto-approve it.
+   * This click is Bradley's explicit send instruction for the list;
+   * the engine's exclusions (no phone, DND, suppressed, recently
+   * contacted) and pacing rails apply unchanged.
+   */
+  async function sendToAll() {
+    if (searchResults.length === 0) return;
+    setBlastBusy("all");
+    setBlastNote(null);
+    setBlastError(null);
+    try {
+      const detail = await createBlastRun({
+        source: "search",
+        properties: searchResults as unknown[],
+        scriptKey: "turnkey_opener",
+        autoApprove: true,
+      });
+      const excluded = detail.counts.total - detail.counts.queued;
+      setBlastNote(
+        `Blast approved — ${detail.counts.queued} ready of ${detail.counts.total} in this list (${excluded} excluded by safety checks). It sends in the background from the Blast panel below; you can close this tab.`,
+      );
+      onBlastRunCreated?.(detail);
+    } catch (err) {
+      setBlastError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBlastBusy(null);
+    }
+  }
+
+  /** "Create blast from selected (N)" — review path: the run stays a
+   *  draft until Bradley approves it in the Blast panel. */
+  async function createFromSelected() {
+    if (selectedListings.length === 0) return;
+    setBlastBusy("selected");
+    setBlastNote(null);
+    setBlastError(null);
+    try {
+      const detail = await createBlastRun({
+        source: "search",
+        properties: selectedListings as unknown[],
+        scriptKey: "turnkey_opener",
+      });
+      setBlastNote(
+        `Draft blast built from ${selectedListings.length} selected ${selectedListings.length === 1 ? "property" : "properties"} — review it in the Blast panel below and click Approve there to send.`,
+      );
+      onBlastRunCreated?.(detail);
+    } catch (err) {
+      setBlastError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBlastBusy(null);
     }
   }
 
@@ -596,6 +672,48 @@ export default function DealPanel({
       {searchError && <div className="error">{searchError}</div>}
 
       {searchResults.length > 0 && (
+        <div className="results-toolbar">
+          <span className="small">
+            Zillow/Redfin results — {searchResults.length}{" "}
+            {searchResults.length === 1 ? "listing" : "listings"}
+          </span>
+          <div className="inline-actions">
+            <button
+              className="btn primary"
+              disabled={blastBusy !== null}
+              onClick={() => void sendToAll()}
+            >
+              {blastBusy === "all" ? "Building blast…" : "Send to all"}
+            </button>
+            <button
+              className="btn"
+              aria-pressed={selectionMode}
+              onClick={() => setSelectionMode((v) => !v)}
+            >
+              Select properties
+            </button>
+            {selectionMode && selectedListings.length > 0 && (
+              <button
+                className="btn"
+                disabled={blastBusy !== null}
+                onClick={() => void createFromSelected()}
+              >
+                {blastBusy === "selected"
+                  ? "Building…"
+                  : `Create blast from selected (${selectedListings.length})`}
+              </button>
+            )}
+          </div>
+          <p className="small">
+            Sends the initial message to every realtor in this list
+            (safety exclusions still apply).
+          </p>
+          {blastNote && <p className="small">{blastNote}</p>}
+          {blastError && <div className="error">{blastError}</div>}
+        </div>
+      )}
+
+      {searchResults.length > 0 && (
         <div className="search-cards">
           {searchResults.map((p, i) => (
             <div className="search-card" key={`${p.address ?? i}-${i}`}>
@@ -619,7 +737,7 @@ export default function DealPanel({
                 >
                   Run underwriting
                 </button>
-                {onToggleListing && (
+                {selectionMode && onToggleListing && (
                   <label className="blast-pick">
                     <input
                       type="checkbox"

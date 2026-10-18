@@ -7,9 +7,9 @@ import Inbox from "@/components/Inbox";
 import DealPanel from "@/components/DealPanel";
 import BlastPanel from "@/components/BlastPanel";
 import DraftsPanel from "@/components/DraftsPanel";
-import AiCommand from "@/components/AiCommand";
 import {
   fetchPipelineMap,
+  type BlastRunDetailData,
   type PipelineMapData,
 } from "@/components/api";
 import type { InboxFilter } from "@/lib/ghl/pipelineMap";
@@ -20,9 +20,11 @@ import type { DealPrefill } from "@/lib/deals/prefill";
  * Wholesale AI — command center (milestone 3 layout).
  * Top to bottom: Header → Property Workbench (listing data + modes +
  * underwriting) → pipeline cards → the full-width unified inbox →
- * drafts. The AI command bar is fixed to the bottom of the viewport.
- * Mode ([Houses|Land], Houses: [Turnkey|Traditional Wholesale]) is page
- * state, persisted to localStorage, and passed into the workbench.
+ * blast → drafts. (The old fixed bottom AI command bar was removed —
+ * AI drafting now lives per-thread in the inbox: Send + "Draft with
+ * AI" under each composer.) Mode ([Houses|Land], Houses:
+ * [Turnkey|Traditional Wholesale]) is page state, persisted to
+ * localStorage, and passed into the workbench.
  */
 
 type TopMode = "houses" | "land";
@@ -39,6 +41,16 @@ export default function HomePage() {
   // Workbench properties checked for a blast run — shared between the
   // DealPanel result cards (checkboxes) and the Blast panel (queue source).
   const [selectedListings, setSelectedListings] = useState<DealPrefill[]>([]);
+  // A blast run just created from the workbench toolbar — the Blast
+  // panel opens it and scrolls into view when this changes.
+  const [blastFocus, setBlastFocus] = useState<{
+    id: string;
+    nonce: number;
+  } | null>(null);
+
+  const onBlastRunCreated = useCallback((detail: BlastRunDetailData) => {
+    setBlastFocus({ id: detail.run.id, nonce: Date.now() });
+  }, []);
 
   const toggleListing = useCallback(
     (property: DealPrefill, checked: boolean) => {
@@ -139,6 +151,7 @@ export default function HomePage() {
           mode={mode}
           selectedListings={selectedListings}
           onToggleListing={toggleListing}
+          onBlastRunCreated={onBlastRunCreated}
         />
 
         <PipelineStrip
@@ -157,11 +170,11 @@ export default function HomePage() {
           pipelineMap={pipelineMap}
           selectedListings={selectedListings}
           onClearSelection={() => setSelectedListings([])}
+          focusRun={blastFocus}
         />
 
         <DraftsPanel />
       </main>
-      <AiCommand />
     </>
   );
 }

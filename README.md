@@ -7,13 +7,14 @@ for multi-tenant SaaS operation (every record carries an `organizationId`).
 ## Milestones 1–3 (built)
 
 - Single-screen dashboard: unified inbox (HighLevel / Gmail feeds),
-  property pipeline, deal underwriting, AI command box.
+  property pipeline, deal underwriting, per-thread AI drafting.
 - **Layout (Milestone 3):** the Property Workbench (listing data +
   underwriting) sits at the very top of the page, the pipeline cards sit
   under it, and the unified inbox is the dominant full-width section
-  directly below, followed by the drafts queue. The AI Command box is a
-  fixed bottom bar with a tab handle that expands/collapses while you
-  scroll. The old Buyers card is gone from the page.
+  directly below, followed by the blast panel and the drafts queue. The
+  old fixed bottom AI command bar has been removed — AI drafting now
+  lives per-thread in the inbox (see below). The old Buyers card is
+  gone from the page.
 - **Modes (Milestone 3):** a page-level switch — [Houses | Land], with
   Houses split into [Turnkey | Traditional Wholesale] — persisted in the
   browser and fed into underwriting. Traditional Wholesale is ARV-based:
@@ -33,6 +34,20 @@ for multi-tenant SaaS operation (every record carries an `organizationId`).
   drafts, and multi-select with per-contact personalized bulk drafts
   (`{first}` in a template is replaced with each contact's first name; the
   recipient is resolved server-side from the live contact).
+- **Per-thread Send + Draft with AI (both inbox feeds):** directly under
+  each thread's composer, **Send** takes the composer's current text and
+  runs it through the existing approval-gated machinery — it creates a
+  Draft via the drafts API, approves it, and calls the same send endpoint
+  as the drafts queue's "Send now" (`lib/comms/send.ts` remains the only
+  send path; suppression + live DND checks intact). Typing the text and
+  pressing Send IS the approval. A blocked send (e.g. DND) shows the
+  reason inline and keeps the text. **Draft with AI** calls
+  `POST /api/ai/draft-reply`, which assembles the thread's recent
+  messages, the contact's pipeline stages + deal flag, and the
+  opportunity's name/value server-side, then drafts a reply in Bradley's
+  voice into the composer — it never auto-sends. Reply drafting has no
+  template fallback: without `ANTHROPIC_API_KEY` the button says so
+  plainly instead of faking a draft.
 - **Inbox styles per feed:** both feeds are iMessage-style — a
   scrollable list pane (avatar initials, preview, time, blue unread
   dot) beside the thread with chat bubbles (inbound gray left,
@@ -71,10 +86,11 @@ for multi-tenant SaaS operation (every record carries an `organizationId`).
 - Editable offer drafts generated from approved default scripts, saved to a
   drafts queue with approve/reject. Approved is NOT sent — sending is a
   separate, gated action.
-- Automated tests: `npm test` (75 tests — underwriting math incl. the
+- Automated tests: `npm test` (117 tests — underwriting math incl. the
   traditional model, Gmail parsing, pipeline aggregation + pipeline map,
   URL parsing, Actor/RentCast row mapping, under-contract matching,
-  learning-loop counting, AI cost controls, draft personalization).
+  learning-loop counting, AI cost controls, draft personalization,
+  context-dependent model selection, blast auto-approve).
 
 ## Property data: sources, costs, and the RentCast gate (Milestone 3)
 
@@ -121,16 +137,31 @@ for multi-tenant SaaS operation (every record carries an `organizationId`).
 
 ## AI drafting cost controls
 
-Only the offer message is model-personalized (`lib/ai/draft.ts`, via
-`POST /api/ai/draft-offer`); first messages/openers stay pure approved
-templates with zero model calls. Without `ANTHROPIC_API_KEY` the helper
-reports not-configured and the UI falls back to the plain template,
-stated openly.
+Two drafting paths use the model (`lib/ai/draft.ts`): the offer message
+(`POST /api/ai/draft-offer`, which falls back to the plain template when
+unconfigured) and per-thread replies (`POST /api/ai/draft-reply`, no
+template fallback — see the inbox bullet above). First messages/openers
+stay pure approved templates with zero model calls. Without
+`ANTHROPIC_API_KEY` the helpers report not-configured, stated openly.
 
-- **Models:** `AI_DRAFT_MODEL` (default `claude-haiku-4-5`) for routine
-  drafts; escalation to `AI_ESCALATION_MODEL` (default
-  `claude-sonnet-5`) when the modeled fee is ≥ $25,000 or the caller
-  asks. `max_tokens` is capped at 220 — these are text messages.
+- **Context-dependent model selection** (`lib/ai/modelSelect.ts`,
+  pure `selectModel(ctx)`): routine pre-deal / pre-contract
+  communication drafts on **Haiku** (`AI_DRAFT_MODEL`, default
+  `claude-haiku-4-5`). **Sonnet** (`AI_ESCALATION_MODEL`, default
+  `claude-sonnet-5`) when ANY of: the contact is on a live deal
+  (Dispositions or a contract stage); any of their pipeline stages is a
+  deal/contract stage (all Dispositions stages; Acquisitions
+  NEGOTIATING / DRAFT AGREEMENT / MOVED TO DISPO / OFFERS MADE;
+  Wholesale Under Contract / Closed); the message is an offer; the
+  modeled fee is ≥ $25,000; or the property value is ≥ $200,000. The
+  offer path routes through the same function with intent "offer".
+  Every call logs the chosen model AND the human-readable reason
+  ("deal under contract", "negotiation stage", "offer message",
+  "fee $X", "property value $X", "routine pre-deal communication") to
+  `wai_ai_usage`; the inbox shows the same pair as a chip under the
+  composer after an AI draft ("Drafted with Haiku — routine pre-deal
+  communication"). `max_tokens` is capped at 220 — these are text
+  messages.
 - **Per-draft cost:** ~$0.001–0.002 at Haiku rates ($1 in / $5 out per
   1M tokens). The style guide + approved script travel in a
   prompt-cached system block, so on repeat drafts that block bills at
@@ -151,8 +182,20 @@ HighLevel number using Bradley's two approved opener scripts
 (`lib/comms/scripts.ts`, sent verbatim with `{first}`/`{street}`
 personalization — no other text, no AI rewriting in this path).
 
-**Building a queue.** The primary source is the workbench: check "Add to
-blast" on Zillow/Redfin result cards, then Build queue. Each selected
+**Building a queue.** The workbench results toolbar (above the
+Zillow/Redfin result cards) is the primary entry point:
+**Send to all** builds a run from ALL properties in the current result
+list with the turnkey opener and **auto-approves** it
+(`POST /api/blast/runs` with `autoApprove: true`) — the button press is
+Bradley's explicit send instruction for that list, the engine starts
+on the next tick, and the page scrolls to the Blast panel showing the
+run with ready-vs-excluded counts. **Select properties** toggles
+selection mode on the result cards (the "Add to blast" checkboxes);
+with N selected, **Create blast from selected (N)** builds the run via
+the review path (status draft — approved in the Blast panel). Inside
+the Blast panel itself, the primary source is the workbench selection:
+check "Add to blast" on Zillow/Redfin result cards, then Build queue.
+Each selected
 property's listing agent is resolved from the cached property detail;
 the agent's HighLevel contact is created or found by phone (canonical
 per realtor — search by phone first; on create the Listing Street
@@ -168,7 +211,11 @@ contact+street already sent via this app within 30 days.
 shared engine `stepBlastRun` in `lib/blast/service.ts`):**
 
 - **Approval gate:** building a run sends nothing. Bradley's "Approve &
-  start" click is the only thing that makes a run sendable.
+  start" click is the only thing that makes a run sendable — the single
+  exception is the workbench's **Send to all** button, whose press is
+  itself the approval for that visible list (the run is created in
+  approved status). Either way, no run sends a message its exclusions
+  or the pacing rails would block.
 - **Pacing:** at least 45s between sends (the engine targets a ~50s
   cadence), in groups of 10 followed by a 180s pause. `POST
   /api/blast/runs/[id]/step` sends at most one item and refuses early
@@ -206,10 +253,12 @@ always set it.
   show. The send path still refuses drafts with feed `voice`
   explicitly, and any stored Voice drafts still load in the drafts
   queue.
-- AI command box: provider-agnostic (OpenAI / Anthropic / Gemini via env
-  keys). With no key, the command box falls back to the approved templates
-  and labels its output "rule-based". (Offer-message personalization is
-  Anthropic-only — see the cost-controls section above.)
+- AI command endpoint: the bottom command bar UI was removed (AI
+  drafting is per-thread now). `POST /api/ai/command` + `lib/ai` remain
+  server-side: provider-agnostic (OpenAI / Anthropic / Gemini via env
+  keys), falling back to the approved templates labeled "rule-based"
+  when no key is set. (Offer/reply personalization is Anthropic-only —
+  see the cost-controls section above.)
 
 ## Setup
 

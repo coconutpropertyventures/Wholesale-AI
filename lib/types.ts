@@ -101,7 +101,10 @@ export interface AiUsageEntry {
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;         // cache-read input tokens (billed cheap)
-  purpose: string;              // e.g. "draft-offer"
+  purpose: string;              // e.g. "draft-offer", "draft-reply"
+  /** Why this model was chosen (lib/ai/modelSelect reason), when the
+   *  call went through context-dependent model selection. */
+  reason?: string;
   createdAt: string;
 }
 

@@ -559,6 +559,8 @@ export interface AddAiUsageInput {
   outputTokens: number;
   cachedTokens: number;
   purpose: string;
+  /** Model-selection reason (lib/ai/modelSelect), when applicable. */
+  reason?: string;
   organizationId?: string;
 }
 
@@ -573,6 +575,7 @@ export async function addAiUsage(
     outputTokens: input.outputTokens,
     cachedTokens: input.cachedTokens,
     purpose: input.purpose,
+    reason: input.reason,
     createdAt: new Date().toISOString(),
   };
   if (usePostgres()) {

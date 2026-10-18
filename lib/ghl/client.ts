@@ -353,12 +353,19 @@ export interface GhlOpportunity {
   pipelineId: string;
   pipelineStageId: string;
   status: string; // open | won | lost | abandoned
+  /** Opportunity value in dollars, when HighLevel reports one. Feeds
+   *  the AI model-selection value threshold (see lib/ai/modelSelect). */
+  monetaryValue?: number;
 }
 
 function mapOpportunity(raw: Raw): GhlOpportunity | null {
   const id = asString(raw.id);
   const contactId = asString(raw.contactId);
   if (!id || !contactId) return null;
+  const monetaryValue =
+    typeof raw.monetaryValue === "number" && raw.monetaryValue > 0
+      ? raw.monetaryValue
+      : undefined;
   return {
     id,
     name: asString(raw.name) ?? "",
@@ -366,6 +373,7 @@ function mapOpportunity(raw: Raw): GhlOpportunity | null {
     pipelineId: asString(raw.pipelineId) ?? "",
     pipelineStageId: asString(raw.pipelineStageId) ?? "",
     status: asString(raw.status) ?? "open",
+    monetaryValue,
   };
 }
 

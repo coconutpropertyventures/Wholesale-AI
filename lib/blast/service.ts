@@ -193,6 +193,15 @@ export interface BuildBlastRunInput {
   properties?: DealPrefill[];
   scriptKey: BlastScriptKey;
   dailyCap?: number;
+  /**
+   * Skip the review step: create the run already approved so the
+   * background engine starts it on the next tick. Used ONLY by the
+   * workbench's "Send to all" button — that click is Bradley's
+   * explicit send instruction for the visible list. All engine
+   * exclusions (no phone, DND, suppressed, recently contacted) and
+   * pacing rails still apply unchanged.
+   */
+  autoApprove?: boolean;
 }
 
 export async function buildBlastRun(
@@ -423,7 +432,21 @@ export async function buildBlastRun(
     scriptKey: run.scriptKey,
     counts: plan.counts,
     resolutionFailures: resolutionFailures.length,
+    autoApprove: input.autoApprove === true,
   });
+  if (input.autoApprove) {
+    // "Send to all": the button press IS the approval. Flip the fresh
+    // draft run to approved through the same lifecycle function the
+    // BlastPanel Approve button uses; the engine picks it up on the
+    // next tick (item exclusions computed above still stand).
+    const approved = await approveBlastRun(run.id);
+    return {
+      run: approved.run,
+      items,
+      counts: blastCounts(items),
+      sentToday: 0,
+    };
+  }
   return {
     run,
     items,
