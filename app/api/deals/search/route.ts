@@ -27,22 +27,33 @@ export async function POST(req: NextRequest) {
     );
   }
   if (!apifyConfigured()) {
-    return NextResponse.json({ ok: true, configured: false, results: [] });
+    return NextResponse.json({
+      ok: true,
+      configured: false,
+      results: [],
+      totalReturned: 0,
+    });
   }
   try {
     // A fresh Actor run is performed for the query itself so the list is
     // current; each result is cached per property so loading it into the
-    // workbench never costs a second pull. The Actor ignores maxItems,
-    // so a broad search can return 1,000+ mapped rows — cap at the first
-    // 100 before responding and caching to bound the payload and the
-    // number of cache writes per search.
-    const results = (await searchRedfin(query)).slice(0, 100);
+    // workbench never costs a second pull. The Apify client caps the run
+    // itself at MAX_APIFY_ITEMS_PER_RUN (500) rows; the response shows
+    // the first 100 and reports the honest post-cap total as
+    // `totalReturned` so the UI can say how much actually came back.
+    const all = await searchRedfin(query);
+    const results = all.slice(0, 100);
     await Promise.all(
       results
         .filter((r) => r.address)
         .map((r) => putCachedPrefill(r.address as string, r, "apify")),
     );
-    return NextResponse.json({ ok: true, configured: true, results });
+    return NextResponse.json({
+      ok: true,
+      configured: true,
+      results,
+      totalReturned: all.length,
+    });
   } catch (err) {
     return NextResponse.json(
       {

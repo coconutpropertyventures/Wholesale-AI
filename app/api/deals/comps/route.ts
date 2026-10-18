@@ -7,6 +7,8 @@ import {
 } from "@/lib/deals/cache";
 import {
   buildCompsViewport,
+  COMPS_RENT_MAX_ITEMS,
+  COMPS_SOLD_MAX_ITEMS,
   rentCompsUrl,
   selectRentComps,
   selectSoldComps,
@@ -146,14 +148,22 @@ export async function POST(req: NextRequest) {
   try {
     const actor = redfinActorId();
     const [soldRows, rentRows] = await Promise.all([
-      runActorSync(actor, {
-        searchUrls: [{ url: soldCompsUrl(subject.zip, viewport) }],
-        zoomIn: true,
-      }),
-      runActorSync(actor, {
-        searchUrls: [{ url: rentCompsUrl(subject.zip, viewport) }],
-        zoomIn: true,
-      }),
+      runActorSync(
+        actor,
+        {
+          searchUrls: [{ url: soldCompsUrl(subject.zip, viewport) }],
+          zoomIn: true,
+        },
+        COMPS_SOLD_MAX_ITEMS,
+      ),
+      runActorSync(
+        actor,
+        {
+          searchUrls: [{ url: rentCompsUrl(subject.zip, viewport) }],
+          zoomIn: true,
+        },
+        COMPS_RENT_MAX_ITEMS,
+      ),
     ]);
     const sold = selectSoldComps(subject, soldRows);
     const rent = selectRentComps(subject, rentRows);

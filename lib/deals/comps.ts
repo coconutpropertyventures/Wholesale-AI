@@ -86,6 +86,13 @@ export interface RentSelection {
 
 export const COMPS_RADIUS_MI = 0.5;
 export const SOLD_WINDOW_DAYS = 365;
+/** Per-pull Apify budgets for the comps feeds (cost cap, 2026-10-18):
+ *  one underwriting pulls at most 300 sold + 200 rental rows = 500
+ *  total, under the app-wide MAX_APIFY_ITEMS_PER_RUN ceiling, and the
+ *  result is then cached for 7 days. The route passes these to
+ *  runActorSync; the selection math below is unaffected. */
+export const COMPS_SOLD_MAX_ITEMS = 300;
+export const COMPS_RENT_MAX_ITEMS = 200;
 /** A "turnkey" screen: sold comps priced (per sqft) far below the
  *  local median are treated as distressed/teardown sales and dropped. */
 export const DISTRESS_FLOOR = 0.45;

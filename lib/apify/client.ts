@@ -17,6 +17,28 @@ import { resolveRedfinSearchUrl } from "@/lib/deals/redfinUrl";
 const APIFY_BASE = "https://api.apify.com/v2";
 const RUN_TIMEOUT_MS = 110_000;
 
+/**
+ * Hard cost cap (Bradley, 2026-10-18): NO single Apify run may pull
+ * more than 500 dataset items — broad pulls were burning his credits.
+ * Enforced twice: as the `maxItems` query parameter on the run request
+ * (the API stops returning items at the cap) AND as a client-side
+ * slice of whatever came back, so an Actor that ignores the parameter
+ * still cannot hand this app more than the budget. Every caller passes
+ * an explicit per-call budget at or below this ceiling.
+ */
+export const MAX_APIFY_ITEMS_PER_RUN = 500;
+
+/** Clamp a requested item budget into [1, MAX_APIFY_ITEMS_PER_RUN]. */
+export function clampApifyMaxItems(requested?: number): number {
+  if (requested === undefined || !Number.isFinite(requested)) {
+    return MAX_APIFY_ITEMS_PER_RUN;
+  }
+  return Math.min(
+    MAX_APIFY_ITEMS_PER_RUN,
+    Math.max(1, Math.floor(requested)),
+  );
+}
+
 export function apifyConfigured(): boolean {
   return Boolean(process.env.APIFY_TOKEN?.trim());
 }
@@ -56,15 +78,17 @@ type RawRow = Record<string, unknown>;
 export async function runActorSync(
   actorId: string,
   input: Record<string, unknown>,
+  maxItems: number = MAX_APIFY_ITEMS_PER_RUN,
 ): Promise<RawRow[]> {
   const token = process.env.APIFY_TOKEN?.trim();
   if (!token) throw new Error("Apify is not configured: APIFY_TOKEN is not set.");
+  const cap = clampApifyMaxItems(maxItems);
   const pathId = actorId.replace("/", "~");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), RUN_TIMEOUT_MS);
   try {
     const res = await fetch(
-      `${APIFY_BASE}/acts/${pathId}/run-sync-get-dataset-items?token=${encodeURIComponent(token)}`,
+      `${APIFY_BASE}/acts/${pathId}/run-sync-get-dataset-items?token=${encodeURIComponent(token)}&maxItems=${cap}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -78,7 +102,10 @@ export async function runActorSync(
       throw new Error(`Apify run failed (${res.status}): ${text.slice(0, 200)}`);
     }
     const parsed: unknown = text ? JSON.parse(text) : [];
-    return Array.isArray(parsed) ? (parsed as RawRow[]) : [];
+    const rows = Array.isArray(parsed) ? (parsed as RawRow[]) : [];
+    // Belt and braces: even if an Actor returns more than the API was
+    // asked for, never hand callers more than the budget.
+    return rows.slice(0, cap);
   } finally {
     clearTimeout(timer);
   }
@@ -101,7 +128,12 @@ export async function lookupListing(input: {
   if (input.address) {
     actorInput.addresses = [input.address];
   }
-  const rows = await runActorSync(zillowActorId(), actorInput);
+  // Single-listing lookup: budget exactly the batch being requested
+  // (one startUrl and/or one address — never a search-sized budget).
+  const requested =
+    (Array.isArray(actorInput.startUrls) ? actorInput.startUrls.length : 0) +
+    (Array.isArray(actorInput.addresses) ? actorInput.addresses.length : 0);
+  const rows = await runActorSync(zillowActorId(), actorInput, Math.max(1, requested));
   if (rows.length === 0) return null;
   const prefill = mapApifyRow(rows[0]);
   if (!prefill.sourceUrl && input.url) prefill.sourceUrl = input.url;
@@ -120,10 +152,16 @@ export async function lookupListing(input: {
  */
 export async function searchRedfin(query: string): Promise<DealPrefill[]> {
   const url = await resolveRedfinSearchUrl(query);
-  const rows = await runActorSync(redfinActorId(), {
-    searchUrls: [{ url }],
-    zoomIn: true,
-  });
+  const rows = await runActorSync(
+    redfinActorId(),
+    {
+      searchUrls: [{ url }],
+      zoomIn: true,
+    },
+    // Search budget: the full per-run ceiling, enforced at the client —
+    // a broad city pull stops at 500 rows, never thousands.
+    MAX_APIFY_ITEMS_PER_RUN,
+  );
   return rows.map(mapRedfinRow).filter((p) => p.address || p.listPrice);
 }
 
@@ -141,9 +179,14 @@ export async function searchRedfin(query: string): Promise<DealPrefill[]> {
 export async function fetchRedfinDetailPrefill(
   url: string,
 ): Promise<DealPrefill | null> {
-  const rows = await runActorSync(redfinDetailActorId(), {
-    startUrls: [url],
-  });
+  // One listing URL in, one row out — budget exactly 1.
+  const rows = await runActorSync(
+    redfinDetailActorId(),
+    {
+      startUrls: [url],
+    },
+    1,
+  );
   if (rows.length === 0) return null;
   const match =
     rows.find((r) => typeof r.url === "string" && r.url === url) ?? rows[0];
@@ -210,17 +253,23 @@ function runRefFrom(payload: Record<string, unknown>): ActorRunRef {
   };
 }
 
-/** Start an Actor run without waiting for it. POST /v2/acts/{id}/runs. */
+/** Start an Actor run without waiting for it. POST /v2/acts/{id}/runs.
+ *  The run request carries the same 500-item ceiling as the sync path
+ *  (callers here start detail batches of ≤25 URLs by design, so the
+ *  cap is a backstop, not a behavior change). */
 export async function startActorRun(
   actorId: string,
   input: Record<string, unknown>,
 ): Promise<ActorRunRef> {
   const pathId = actorId.replace("/", "~");
-  const payload = await apifyFetch(`/acts/${pathId}/runs`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
+  const payload = await apifyFetch(
+    `/acts/${pathId}/runs?maxItems=${MAX_APIFY_ITEMS_PER_RUN}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
   const ref = runRefFrom(payload);
   if (!ref.runId) throw new Error("Apify did not return a run id.");
   return ref;
@@ -232,14 +281,16 @@ export async function getActorRun(runId: string): Promise<ActorRunRef> {
   return runRefFrom(payload);
 }
 
-/** Read a finished run's dataset rows. GET /v2/datasets/{id}/items. */
+/** Read a finished run's dataset rows. GET /v2/datasets/{id}/items.
+ *  Read-side cap: never pull more than MAX_APIFY_ITEMS_PER_RUN rows
+ *  out of a dataset in one call (detail datasets here hold ≤25). */
 export async function getDatasetItems(datasetId: string): Promise<RawRow[]> {
   const token = requireToken();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ASYNC_CALL_TIMEOUT_MS);
   try {
     const res = await fetch(
-      `${APIFY_BASE}/datasets/${encodeURIComponent(datasetId)}/items?token=${encodeURIComponent(token)}`,
+      `${APIFY_BASE}/datasets/${encodeURIComponent(datasetId)}/items?token=${encodeURIComponent(token)}&limit=${MAX_APIFY_ITEMS_PER_RUN}`,
       { signal: controller.signal, cache: "no-store" },
     );
     const text = await res.text();
@@ -249,7 +300,8 @@ export async function getDatasetItems(datasetId: string): Promise<RawRow[]> {
       );
     }
     const parsed: unknown = text ? JSON.parse(text) : [];
-    return Array.isArray(parsed) ? (parsed as RawRow[]) : [];
+    const rows = Array.isArray(parsed) ? (parsed as RawRow[]) : [];
+    return rows.slice(0, MAX_APIFY_ITEMS_PER_RUN);
   } finally {
     clearTimeout(timer);
   }
