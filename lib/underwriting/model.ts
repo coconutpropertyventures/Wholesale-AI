@@ -1,7 +1,18 @@
 /**
- * Wholesale Model v3.1 — Coconut Property Ventures underwriting.
+ * Wholesale Model v3.2 — Coconut Property Ventures underwriting.
  * The assignment fee is the OUTPUT, never an input.
  * Every result carries its assumptions and flags which inputs are unverified.
+ *
+ * v3.2 ceiling change (Bradley, 2026-10-18), on-market listings:
+ *  - Turnkey buyer ceiling = min(NOI / target cap, list − 5%). Market
+ *    value (MV) is NO LONGER a ceiling term — computed and displayed
+ *    as a reference figure only.
+ *  - Hard invariant, BOTH modes: the buyer ceiling can never exceed
+ *    the list price. Traditional keeps its base (wholesale % × ARV)
+ *    and gains the clamp: ceiling = min(pct × ARV, list).
+ * Everything downstream is unchanged: MAO = min(ceiling − fee, list),
+ * fee = ceiling − contract, A–F grade bands, turnkey initial offer =
+ * list − 10% after intake.
  */
 
 export type DealMode = "turnkey" | "flip" | "land" | "traditional";
@@ -13,7 +24,7 @@ export interface UnderwritingInputs {
   annualTaxes?: number;           // if unknown, estimated and flagged
   annualInsurance?: number;       // if unknown, estimated and flagged
   monthlyHoa?: number;
-  marketValue?: number;           // MV estimate (sold comps); the swing factor
+  marketValue?: number;           // MV estimate (sold comps); v3.2: reference only, never a ceiling term
   dom?: number;                   // days on market
   priceCuts?: number;             // number of price reductions
   arv?: number;                   // flip + traditional mode: after-repair value
@@ -28,6 +39,9 @@ export interface UnderwritingResult {
   mode: DealMode;
   noi?: number;
   buyerCeiling?: number;
+  /** Which term set the buyer ceiling — display label ("NOI / 5%",
+   *  "List − 5%", "List price", "Wholesale % × ARV"). */
+  ceilingBinding?: string;
   mao: number;                    // max allowable offer (contract price cap)
   suggestedContract: number;      // realistic contract from motivation discount
   assignmentFee: number;          // ceiling - contract (turnkey) or mao - contract
@@ -87,9 +101,18 @@ function underwriteTurnkey(inp: UnderwritingInputs): UnderwritingResult {
     - taxes - insurance - hoa;
 
   const noiOnlyCeiling = cap > 0 ? noi / cap : 0;
-  let ceiling = noiOnlyCeiling;
-  if (inp.marketValue) ceiling = Math.min(noiOnlyCeiling, inp.marketValue);
-  else unverified.push("marketValue");
+  // v3.2: ceiling = min(NOI / cap, list − 5%). MV is not a term here
+  // anymore (reference only — still flagged unverified when absent,
+  // since it is shown for context). Because list × 0.95 < list, the
+  // hard invariant — ceiling never above list price — holds by
+  // construction.
+  const listCap = inp.listPrice * 0.95;
+  const ceiling = Math.min(noiOnlyCeiling, listCap);
+  const ceilingBinding =
+    noiOnlyCeiling <= listCap
+      ? `NOI / ${(cap * 100).toFixed(0)}%`
+      : "List − 5%";
+  if (!inp.marketValue) unverified.push("marketValue");
 
   // MAO is hard-capped at list price, always.
   const mao = Math.min(ceiling - fee, inp.listPrice);
@@ -111,6 +134,7 @@ function underwriteTurnkey(inp: UnderwritingInputs): UnderwritingResult {
     mode: "turnkey",
     noi: Math.round(noi),
     buyerCeiling: Math.round(ceiling),
+    ceilingBinding,
     mao: Math.round(mao),
     suggestedContract,
     assignmentFee,
@@ -127,7 +151,7 @@ function underwriteTurnkey(inp: UnderwritingInputs): UnderwritingResult {
     unverified,
     explanation: [
       `NOI $${Math.round(noi).toLocaleString()} at $${rent.toLocaleString()}/mo rent with 8% vacancy, 10% management, 8% maintenance, 8% capex.`,
-      `Buyer ceiling = min(NOI / ${(cap * 100).toFixed(0)}%${inp.marketValue ? `, MV $${inp.marketValue.toLocaleString()}` : ""}) = $${Math.round(ceiling).toLocaleString()}.`,
+      `Buyer ceiling = min(NOI / ${(cap * 100).toFixed(0)}% = $${Math.round(noiOnlyCeiling).toLocaleString()}, list − 5% = $${Math.round(listCap).toLocaleString()}) = $${Math.round(ceiling).toLocaleString()} — bound by ${ceilingBinding}.${inp.marketValue ? ` MV $${inp.marketValue.toLocaleString()} is reference only (not a ceiling term).` : ""}`,
       `MAO = min(ceiling - $${fee.toLocaleString()} fee, list $${inp.listPrice.toLocaleString()}) = $${Math.round(mao).toLocaleString()}.`,
       `Initial offer = list - 10% = $${initialOffer.toLocaleString()}, made after intake answers are in. Fee at that offer $${assignmentFee.toLocaleString()}, grade ${gradeForFee(assignmentFee)}.${initialOffer > mao ? ` Opener exceeds MAO ($${Math.round(mao).toLocaleString()}) — suggested contract is capped at MAO; override from the calculator advised.` : ""}`,
       `Calculator advisory: motivation discount ${(discountRate * 100).toFixed(0)}% (DOM ${inp.dom ?? 0}, cuts ${inp.priceCuts ?? 0}) -> modeled contract $${modeledContract.toLocaleString()} — available as an override.`
@@ -193,7 +217,9 @@ function underwriteLand(inp: UnderwritingInputs): UnderwritingResult {
 
 function underwriteTraditional(inp: UnderwritingInputs): UnderwritingResult {
   // Traditional wholesale: the end buyer pays a percentage of ARV, all-in.
-  // ceiling = pct x ARV is the buyer's all-in max; the contract (MAO) must
+  // ceiling = min(pct x ARV, list) is the buyer's all-in max (v3.2: the
+  // list clamp is the hard invariant — the ceiling never exceeds list);
+  // the contract (MAO) must
   // leave room for repairs plus the target fee inside that ceiling. The fee
   // is the OUTPUT: contracting at MAO leaves exactly the target fee, and the
   // MAO cap at list price can push the realized fee above it.
@@ -204,7 +230,12 @@ function underwriteTraditional(inp: UnderwritingInputs): UnderwritingResult {
   const pct = inp.wholesalePercent ?? 0.7;
   const arv = inp.arv ?? 0;
   const repairs = inp.repairEstimate ?? 0;
-  const ceiling = pct * arv;
+  const rawCeiling = pct * arv;
+  // v3.2 hard invariant: the buyer ceiling can never exceed list price.
+  const ceiling =
+    inp.listPrice > 0 ? Math.min(rawCeiling, inp.listPrice) : rawCeiling;
+  const ceilingBinding =
+    ceiling < rawCeiling ? "List price" : "Wholesale % × ARV";
   const rawMao = ceiling - repairs - fee;
   const capped = inp.listPrice > 0 ? Math.min(rawMao, inp.listPrice) : rawMao;
   const mao = Math.max(0, capped);
@@ -213,6 +244,7 @@ function underwriteTraditional(inp: UnderwritingInputs): UnderwritingResult {
   return {
     mode: "traditional",
     buyerCeiling: Math.round(ceiling),
+    ceilingBinding,
     mao: Math.round(mao),
     suggestedContract: Math.round(mao),
     initialOffer: Math.round(mao),
@@ -222,7 +254,7 @@ function underwriteTraditional(inp: UnderwritingInputs): UnderwritingResult {
     assumptions: { wholesalePercent: pct, arv, repairs, targetFee: fee },
     unverified,
     explanation: [
-      `Buyer ceiling = ${(pct * 100).toFixed(0)}% x ARV $${arv.toLocaleString()} = $${Math.round(ceiling).toLocaleString()} (all-in).`,
+      `Buyer ceiling = ${(pct * 100).toFixed(0)}% x ARV $${arv.toLocaleString()} = $${Math.round(rawCeiling).toLocaleString()} (all-in)${ceiling < rawCeiling ? `, clamped at list price $${inp.listPrice.toLocaleString()} — the ceiling never exceeds list` : ""} -> $${Math.round(ceiling).toLocaleString()}.`,
       `MAO = ceiling - repairs $${repairs.toLocaleString()} - fee $${fee.toLocaleString()} = $${Math.round(rawMao).toLocaleString()}${rawMao > inp.listPrice ? `, capped at list $${inp.listPrice.toLocaleString()}` : ""}${rawMao < 0 ? ", floored at $0" : ""} -> $${Math.round(mao).toLocaleString()}.`,
       `Traditional offers go in at the number: initial offer = MAO = $${Math.round(mao).toLocaleString()}. Fee at that contract = $${assignmentFee.toLocaleString()}, grade ${gradeForFee(assignmentFee)}.`,
     ],

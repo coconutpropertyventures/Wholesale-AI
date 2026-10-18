@@ -47,7 +47,7 @@ const INPUT_LABELS: Record<string, string> = {
   monthlyRent: "Monthly rent",
   annualTaxes: "Annual taxes",
   annualInsurance: "Annual insurance",
-  marketValue: "Market value (MV)",
+  marketValue: "Market value (MV, reference only)",
   arv: "ARV",
   repairEstimate: "Repair estimate",
   landCompValue: "Land comp value",
@@ -784,7 +784,7 @@ export default function DealPanel({
               <input id="dp-rent" inputMode="decimal" value={f.monthlyRent} onChange={(e) => set("monthlyRent", e.target.value)} placeholder="2150" />
             </div>
             <div className="field">
-              <label htmlFor="dp-mv">Market value / MV ($)</label>
+              <label htmlFor="dp-mv">Market value / MV ($, reference only)</label>
               <input id="dp-mv" inputMode="decimal" value={f.marketValue} onChange={(e) => set("marketValue", e.target.value)} placeholder="215000" />
             </div>
             <div className="field">
@@ -877,6 +877,9 @@ export default function DealPanel({
                   {result.mode === "traditional" ? "Buyer ceiling (all-in)" : "Buyer ceiling"}
                 </div>
                 <div className="v">{fmtMoney(result.buyerCeiling)}</div>
+                {result.ceilingBinding && (
+                  <div className="small">Bound by: {result.ceilingBinding}</div>
+                )}
               </div>
             )}
             <div className="kpi">

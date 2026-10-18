@@ -10,31 +10,51 @@ describe("motivation discount tiers", () => {
   it("fresh listing -> 4%", () => expect(motivationDiscount(10, 0)).toBe(0.04));
 });
 
-describe("turnkey model v3.1", () => {
+describe("turnkey model v3.2", () => {
   // Meridian-like: rent $2,150, list $154,900, MV $215,000, taxes $2,400, insurance $1,500
   const r = underwrite({ mode: "turnkey", listPrice: 154900, monthlyRent: 2150, annualTaxes: 2400, annualInsurance: 1500, marketValue: 215000, dom: 100, priceCuts: 1 });
   it("computes NOI with 34% expense load", () => {
     // gross 25,800 * 0.66 = 17,028 - 2,400 - 1,500 = 13,128
     expect(r.noi).toBe(13128);
   });
-  it("ceiling = min(NOI/5%, MV)", () => {
-    // 13,128 / 0.05 = 262,560 -> capped by MV 215,000
-    expect(r.buyerCeiling).toBe(215000);
+  it("ceiling = min(NOI/5%, list - 5%) — list-bound case", () => {
+    // NOI/5% = 262,560; list - 5% = 147,155 -> the list term binds.
+    // (Under v3.1 the ceiling was MV 215,000; MV is reference-only now.)
+    expect(r.buyerCeiling).toBe(147155);
+    expect(r.ceilingBinding).toBe("List − 5%");
   });
-  it("MAO = min(ceiling - 15k, list)", () => {
-    expect(r.mao).toBe(154900); // 200,000 vs list -> list cap binds
+  it("MAO = min(ceiling - 15k, list) flows from the new ceiling", () => {
+    expect(r.mao).toBe(132155); // 147,155 - 15,000
   });
   it("modeled contract uses the 8% motivation discount (1 cut)", () => {
     expect(r.discountRate).toBe(0.08);
     expect(r.modeledContract).toBe(142508);
   });
-  it("initial offer is list - 10%; suggested contract matches when under MAO", () => {
+  it("initial offer is list - 10%; suggested contract caps at MAO when the opener exceeds it", () => {
     expect(r.initialOffer).toBe(139410); // 154,900 x 0.90
-    expect(r.suggestedContract).toBe(139410);
+    expect(r.suggestedContract).toBe(132155); // opener 139,410 > MAO -> capped
   });
   it("fee is ceiling - initial offer", () => {
-    expect(r.assignmentFee).toBe(215000 - 139410);
-    expect(r.grade).toBe("A");
+    expect(r.assignmentFee).toBe(147155 - 139410); // 7,745
+    expect(r.grade).toBe("C");
+  });
+  it("ceiling NOI-bound case: NOI/5% below 0.95 x list binds", () => {
+    const n = underwrite({ mode: "turnkey", listPrice: 200000, monthlyRent: 1300, annualTaxes: 3000, annualInsurance: 1500 });
+    // NOI = 1300*12*0.66 - 4,500 = 5,796 -> NOI/5% = 115,920 < 190,000
+    expect(n.buyerCeiling).toBe(115920);
+    expect(n.ceilingBinding).toBe("NOI / 5%");
+  });
+  it("MV is no longer a ceiling term, even when MV is the lowest number", () => {
+    const withMv = underwrite({ mode: "turnkey", listPrice: 200000, monthlyRent: 1300, annualTaxes: 3000, annualInsurance: 1500, marketValue: 100000 });
+    // v3.1 would have capped the ceiling at MV 100,000; v3.2 ignores MV.
+    expect(withMv.buyerCeiling).toBe(115920);
+  });
+  it("invariant: ceiling never exceeds list even when NOI/5% towers over it", () => {
+    const hot = underwrite({ mode: "turnkey", listPrice: 100000, monthlyRent: 5000, annualTaxes: 1800, annualInsurance: 1500, marketValue: 500000 });
+    // NOI = 60,000 x 0.66 - 3,300 = 36,300 -> NOI/5% = 726,000
+    expect(hot.buyerCeiling).toBe(95000); // list - 5%
+    expect(hot.buyerCeiling!).toBeLessThanOrEqual(100000);
+    expect(hot.ceilingBinding).toBe("List − 5%");
   });
   it("suggested contract never exceeds MAO even when the opener does", () => {
     const tight = underwrite({ mode: "turnkey", listPrice: 200000, monthlyRent: 1300, annualTaxes: 3000, annualInsurance: 1500 });

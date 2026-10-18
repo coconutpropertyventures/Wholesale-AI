@@ -47,31 +47,36 @@ import type { AiUsageEntry, MessageOutcome } from "../lib/types";
 // ---------- Traditional wholesale math ----------
 
 describe("traditional wholesale model", () => {
-  it("ceiling = 70% of ARV; MAO = ceiling - repairs - fee; fee is the output", () => {
+  it("ceiling = min(70% of ARV, list) [v3.2 clamp]; MAO = ceiling - repairs - fee; fee is the output", () => {
     const r = underwrite({
       mode: "traditional",
       listPrice: 130000,
       arv: 200000,
       repairEstimate: 20000,
     });
-    expect(r.buyerCeiling).toBe(140000);
-    expect(r.mao).toBe(105000);
+    // 70% x ARV = 140,000 > list 130,000 -> v3.2 clamps the ceiling to list.
+    expect(r.buyerCeiling).toBe(130000);
+    expect(r.ceilingBinding).toBe("List price");
+    expect(r.mao).toBe(95000); // 130,000 - 20,000 - 15,000
     expect(r.assignmentFee).toBe(15000);
-    expect(r.initialOffer).toBe(105000);
+    expect(r.initialOffer).toBe(95000);
     expect(r.grade).toBe("A");
     expect(r.unverified).toEqual([]);
   });
 
-  it("caps MAO at list price, which raises the realized fee", () => {
+  it("invariant: ceiling never exceeds list even when pct x ARV is far above it", () => {
     const r = underwrite({
       mode: "traditional",
       listPrice: 100000,
       arv: 200000,
       repairEstimate: 0,
     });
-    // raw MAO = 140,000 - 0 - 15,000 = 125,000 -> capped at list 100,000
-    expect(r.mao).toBe(100000);
-    expect(r.assignmentFee).toBe(40000);
+    // 70% x ARV = 140,000 -> ceiling clamps to list 100,000, so MAO no
+    // longer needs its own list cap and the fee is exactly the target.
+    expect(r.buyerCeiling).toBe(100000);
+    expect(r.buyerCeiling!).toBeLessThanOrEqual(100000);
+    expect(r.mao).toBe(85000); // 100,000 - 0 - 15,000
+    expect(r.assignmentFee).toBe(15000);
     expect(r.grade).toBe("A");
   });
 

@@ -18,9 +18,10 @@ for multi-tenant SaaS operation (every record carries an `organizationId`).
 - **Modes (Milestone 3):** a page-level switch — [Houses | Land], with
   Houses split into [Turnkey | Traditional Wholesale] — persisted in the
   browser and fed into underwriting. Traditional Wholesale is ARV-based:
-  buyer ceiling = wholesale % (default 70%) × ARV, MAO = ceiling −
-  repairs − $15k fee (floored at $0, capped at list), fee graded on the
-  same bands as turnkey, and the initial offer goes in at MAO.
+  buyer ceiling = min(wholesale % (default 70%) × ARV, list price),
+  MAO = ceiling − repairs − $15k fee (floored at $0, capped at list),
+  fee graded on the same bands as turnkey, and the initial offer goes
+  in at MAO.
 - HighLevel API v2 integration (official API, Private Integration token):
   contacts + conversations read; sending only through a single approval-gated
   path with suppression/DND checks and a full audit log. Nothing sends without
@@ -79,14 +80,22 @@ for multi-tenant SaaS operation (every record carries an `organizationId`).
   send path. OAuth tokens are stored ONLY in an encrypted (AES-256-GCM)
   httpOnly cookie in the user's browser; moving token storage to a hosted
   database is future work.
-- Underwriting engine implementing Wholesale Model v3.1 (turnkey / fix-and-flip /
+- Underwriting engine implementing Wholesale Model v3.2 (turnkey / fix-and-flip /
   vacant land): NOI, buyer ceiling, MAO (hard-capped at list price), modeled
   contract from motivation discount tiers, assignment fee as the output, A–F
   grades. Every result lists its assumptions and flags unverified inputs.
+  **v3.2 ceiling (on-market listings):** turnkey buyer ceiling =
+  min(NOI / 5%, list − 5%) — market value (MV) is no longer a ceiling
+  term and is computed/displayed as a reference figure only; and in
+  both modes the buyer ceiling can never exceed the list price
+  (traditional: ceiling = min(wholesale % × ARV, list)). Downstream is
+  unchanged: MAO = min(ceiling − $15k, list), fee = ceiling − contract,
+  turnkey initial offer = list − 10% after intake. The result panel
+  labels which term bound the ceiling ("NOI / 5%" or "List − 5%").
 - Editable offer drafts generated from approved default scripts, saved to a
   drafts queue with approve/reject. Approved is NOT sent — sending is a
   separate, gated action.
-- Automated tests: `npm test` (117 tests — underwriting math incl. the
+- Automated tests: `npm test` (120 tests — underwriting math incl. the
   traditional model, Gmail parsing, pipeline aggregation + pipeline map,
   URL parsing, Actor/RentCast row mapping, under-contract matching,
   learning-loop counting, AI cost controls, draft personalization,
