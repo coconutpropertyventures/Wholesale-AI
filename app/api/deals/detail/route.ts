@@ -24,6 +24,10 @@ export const dynamic = "force-dynamic";
 //   4. Cache the merged record with source tag "apify-detail" so the
 //      detail pull is paid for once per property.
 // Fields no source carries stay absent — nothing is invented here.
+// Photos follow the same completeness rule with one nuance: `photos`
+// is three-state — undefined = never mapped (incomplete, one backfill
+// pull), [] = a detail pull ran and the listing had none (complete,
+// never re-pulled), non-empty = present.
 
 const KEY_DETAIL_FIELDS: (keyof DealPrefill)[] = [
   "yearBuilt",
@@ -34,6 +38,7 @@ const KEY_DETAIL_FIELDS: (keyof DealPrefill)[] = [
   "annualTaxes",
   "rentEstimate",
   "valueEstimate",
+  "photos",
 ];
 
 const SUBJECT_TTL_DAYS = 30;
@@ -85,6 +90,11 @@ export async function POST(req: NextRequest) {
         : await lookupListing({ url: detailUrl, address });
       if (detail) {
         merged = fillMissingPrefill(merged, detail);
+        // A completed detail pull is authoritative for photos: if it
+        // carried none, stamp "known none" explicitly so the record
+        // cached below reads complete and the pull is never repeated
+        // for this property.
+        if (merged.photos === undefined) merged = { ...merged, photos: [] };
         detailFetched = true;
       }
     } catch {
