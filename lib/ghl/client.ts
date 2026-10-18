@@ -463,6 +463,30 @@ export function normalizePhoneDigits(value: string): string {
 }
 
 /**
+ * Normalize a phone for HighLevel WRITES. The contacts API rejects
+ * numbers that are not E.164 with a 400 (verified live 2026-10-18:
+ * "317-550-0700" failed contact creation, "+13175500700" succeeded),
+ * while detail scrapers hand us raw display formats. US numbers in any
+ * common format become "+1XXXXXXXXXX"; an already-international "+"
+ * number with 8–15 digits is returned in stripped "+digits" form.
+ * Anything we don't recognize is passed through trimmed and untouched —
+ * never mangle a number we don't understand.
+ */
+export function toE164Phone(phone?: string): string | undefined {
+  if (phone === undefined) return undefined;
+  const trimmed = phone.trim();
+  const digits = trimmed.replace(/\D/g, "");
+  if (trimmed.startsWith("+")) {
+    return digits.length >= 8 && digits.length <= 15
+      ? `+${digits}`
+      : trimmed;
+  }
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  return trimmed;
+}
+
+/**
  * Canonical-contact lookup by phone: HighLevel search by the digits,
  * then an exact normalized-digit match among the results. Returns null
  * when no contact carries that number — callers create one instead of
@@ -503,7 +527,7 @@ export async function createContact(
     firstName: input.firstName,
     lastName: input.lastName,
     name: input.name,
-    phone: input.phone,
+    phone: toE164Phone(input.phone),
     email: input.email,
   };
   if (input.customFields && input.customFields.length > 0) {
