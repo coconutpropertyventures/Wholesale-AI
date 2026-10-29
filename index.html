@@ -1,0 +1,899 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<link rel="icon" href="data:," />
+<title>Nashville Luxury Teardown — 37215 · 37205 · Oak Hill</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,700;6..72,800&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f7f5f0; --surface:#ffffff; --surface2:#eeebe3; --ink:#17201a; --muted:#5c665e; --line:#ddd8cc;
+  --green:#1d3a2a; --green2:#24513a; --brass:#b5892e; --brass2:#8a671d; --red:#9b2c2c; --amber:#8a5a12; --teal:#16615a;
+  --chip:#eef2ed; --gold-bg:#fdf6df; --hot:#b3401e; --hotter:#8f1d1d;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#0f1511; --surface:#17211a; --surface2:#1e2b21; --ink:#eef0e8; --muted:#a8b3a8; --line:#2c3a2f; --green:#c8e6d2; --green2:#9fd3ae; --brass:#e0b95a; --brass2:#e0b95a; --chip:#223328; --gold-bg:#2a2412; }
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:Manrope,system-ui,sans-serif;background:var(--bg);color:var(--ink);line-height:1.55}
+a{color:var(--green2);text-underline-offset:3px}
+.wrap{max-width:1180px;margin:0 auto;padding:0 18px 64px}
+.hero{padding:34px 0 8px}
+.kicker{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--brass2);font-weight:800}
+h1{font-family:Newsreader,Georgia,serif;font-size:clamp(32px,5.5vw,54px);line-height:.98;margin:10px 0 12px;letter-spacing:-.02em}
+h1 em{color:var(--green2);font-style:normal}
+.lede{font-size:17px;color:var(--muted);max-width:800px}
+.verdict{background:var(--green);color:#fff;border-radius:18px;padding:22px;margin:22px 0}
+@media(prefers-color-scheme:dark){.verdict{background:#1d3a2a}}
+.verdict h2{font-family:Newsreader,serif;margin:0 0 6px;font-size:25px}
+.verdict p{margin:6px 0;color:#dce8df}
+.verdict-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:16px}
+@media(max-width:860px){.verdict-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:520px){.verdict-grid{grid-template-columns:1fr}}
+.vcard{background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:14px}
+.vcard b{font-size:24px;display:block}
+.vcard span{font-size:13px;color:#cfe0d3}
+section{margin-top:40px}
+h2.sec{font-family:Newsreader,serif;font-size:30px;margin:0 0 6px;line-height:1.05}
+.sub{color:var(--muted);max-width:820px;margin:0 0 16px}
+.areas{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+@media(max-width:860px){.areas{grid-template-columns:1fr}}
+.acard{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px}
+.acard h3{font-family:Newsreader,serif;font-size:22px;margin:0 0 2px}
+.acard .tag{font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--brass2)}
+.metric{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--line);font-size:14px}
+.metric:last-child{border-bottom:none}
+.metric b{text-align:right}
+.maplayout{display:grid;grid-template-columns:1.65fr 1fr;gap:16px;align-items:start}
+@media(max-width:900px){.maplayout{grid-template-columns:1fr}}
+.mapbox{background:var(--surface);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+.mapel{width:100%;height:480px;background:var(--surface2)}
+@media(max-width:640px){.mapel{height:380px}}
+.mapfallback{padding:18px;font-size:14px;color:var(--muted)}
+.mapel{position:relative;overflow:hidden;touch-action:none;cursor:grab}
+.mapel.grabbing{cursor:grabbing}
+.mapstage{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}
+.mapstage>img{display:block;user-select:none;-webkit-user-drag:none;pointer-events:none}
+.maplayer{position:absolute;left:0;top:0;right:0;bottom:0}
+.pin{position:absolute;border-radius:50%;transform:translate(-50%,-50%);cursor:pointer;box-sizing:border-box}
+.pin:hover{outline:calc(2px * var(--ik,1)) solid var(--ink);outline-offset:0}
+.mtip{position:absolute;z-index:30;pointer-events:none;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:12.5px;line-height:1.4;max-width:300px;box-shadow:0 6px 24px rgba(0,0,0,.18);display:none}
+.mapctrls{position:absolute;right:10px;top:10px;z-index:20;display:flex;flex-direction:column;gap:6px;align-items:flex-end}
+.mapbtn{min-width:34px;height:34px;border-radius:9px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font-size:18px;font-weight:800;cursor:pointer;line-height:1;font-family:inherit;padding:0 6px}
+.mapbtn.fit{font-size:11px;letter-spacing:.04em}
+.mapattr{position:absolute;left:8px;bottom:6px;z-index:20;font-size:10.5px;color:#3c443e;background:rgba(255,255,255,.78);padding:2px 7px;border-radius:6px;pointer-events:none}
+.legend{display:flex;flex-wrap:wrap;gap:14px;padding:10px 14px;font-size:13px;border-top:1px solid var(--line);background:var(--surface)}
+.dot{display:inline-block;width:11px;height:11px;border-radius:50%;margin-right:6px;vertical-align:-1px}
+.detail{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px;min-height:200px}
+.detail h3{font-family:Newsreader,serif;font-size:22px;margin:0 0 2px;line-height:1.15}
+.detail .addr-sub{font-size:13px;color:var(--muted);margin-bottom:8px}
+.drow{display:flex;justify-content:space-between;gap:14px;padding:6px 0;border-bottom:1px solid var(--line);font-size:13.5px}
+.drow span{color:var(--muted);flex:0 0 auto}
+.drow b{text-align:right;font-weight:700}
+.drow:last-child{border-bottom:none}
+.sigchips{display:flex;flex-wrap:wrap;gap:5px;margin:8px 0}
+.chip{font-size:11.5px;font-weight:800;padding:4px 8px;border-radius:999px;background:var(--gold-bg);color:var(--amber);border:1px solid #e6d48a}
+.chip.check{background:var(--chip);color:var(--muted);border-color:var(--line)}
+.hint{font-size:13px;color:var(--muted)}
+table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden;font-size:13.5px}
+th,td{padding:9px 11px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);background:var(--surface2)}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:var(--chip)}
+.sigcount{display:inline-grid;place-items:center;min-width:26px;height:26px;border-radius:50%;color:#fff;font-weight:800;font-size:13px;padding:0 4px}
+.sc1{background:#b5892e}.sc2{background:#c96a1e}.sc3{background:#b3401e}.sc4{background:#8f1d1d}
+@media(max-width:760px){ table.resp,table.resp thead,table.resp tbody,table.resp tr,table.resp td{display:block;width:100%} table.resp thead{display:none} table.resp tr{border-bottom:2px solid var(--line);padding:8px 0} table.resp td{border:none;padding:5px 12px} table.resp td::before{content:attr(data-l);display:block;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:800} }
+.filters{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0;align-items:end}
+.filters label{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);display:block;margin-bottom:4px}
+select,input{padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);font-size:15px;font-family:inherit}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:760px){.grid2{grid-template-columns:1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px}
+.card h3{margin:0 0 8px;font-size:18px}
+.card label{font-size:13px;font-weight:700;display:block;margin:10px 0 4px}
+.card input{width:100%}
+.btn{border:1px solid var(--green);background:var(--green);color:#fff;padding:10px 16px;border-radius:999px;font-weight:800;cursor:pointer;font-size:14px;font-family:inherit;margin-top:14px}
+@media(prefers-color-scheme:dark){.btn{background:#e6f0e8;color:#17201a;border-color:#e6f0e8}}
+.result{margin-top:14px;padding:14px;border-radius:12px;background:var(--chip);font-weight:700;font-size:14px}
+.result.pass{background:#e2f1e4;color:#174d24}.result.fail{background:#fde8e8;color:#7a1d1d}
+@media(prefers-color-scheme:dark){.result.pass{background:#1e3a24;color:#bfe8c7}.result.fail{background:#3a1e1e;color:#f3b8b8}}
+.note{background:var(--gold-bg);border:1px solid #e8d9a0;border-radius:12px;padding:12px 14px;font-size:14px;margin-top:14px}
+.warn{border-left:4px solid var(--brass);background:var(--surface);padding:14px 16px;border-radius:0 12px 12px 0;font-size:14px;margin-top:14px}
+.steps{counter-reset:s;display:grid;gap:10px}
+.step{display:flex;gap:14px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px}
+.step::before{counter-increment:s;content:counter(s);flex:0 0 34px;height:34px;border-radius:50%;background:var(--green);color:#fff;display:grid;place-items:center;font-weight:800}
+@media(prefers-color-scheme:dark){.step::before{background:#e6f0e8;color:#17201a}}
+.siggrid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+@media(max-width:900px){.siggrid{grid-template-columns:1fr 1fr}}
+@media(max-width:540px){.siggrid{grid-template-columns:1fr}}
+.sigcard{border:1px solid var(--line);background:var(--surface);border-radius:14px;padding:14px}
+.sigcard b{display:block;font-size:15px}
+.sigcard .n{font-family:Newsreader,serif;font-size:26px;color:var(--green2)}
+.sigcard p{margin:4px 0 0;font-size:13px;color:var(--muted)}
+.bar-row{display:grid;grid-template-columns:130px 1fr 70px;gap:10px;align-items:center;margin:8px 0;font-size:13px}
+.bar{height:12px;background:var(--surface2);border-radius:99px;overflow:hidden}.bar i{display:block;height:100%;background:var(--green2)}
+.foot{font-size:13px;color:var(--muted);margin-top:32px;border-top:1px solid var(--line);padding-top:16px}
+.loadmsg{font-size:13px;color:var(--muted);margin:8px 0}
+.nbstats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:16px 0}
+@media(max-width:860px){.nbstats{grid-template-columns:1fr 1fr}}
+@media(max-width:520px){.nbstats{grid-template-columns:1fr}}
+.nbstat{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px}
+.nbstat b{font-family:Newsreader,serif;font-size:26px;display:block;color:var(--green2)}
+.nbstat span{font-size:13px;color:var(--muted)}
+.seg{display:inline-flex;gap:0;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:var(--surface)}
+.seg button{border:0;background:transparent;color:var(--muted);padding:10px 16px;font-weight:800;font-size:14px;font-family:inherit;cursor:pointer}
+.seg button.active{background:var(--green);color:#fff}
+@media(prefers-color-scheme:dark){.seg button.active{background:#e6f0e8;color:#17201a}}
+.sales-controls{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:0 0 14px}
+.sales-controls .sales-count{font-size:13.5px;color:var(--muted);font-weight:700}
+.layertoggles{display:flex;flex-wrap:wrap;gap:8px;padding:10px 14px;border-top:1px solid var(--line);background:var(--surface);align-items:center}
+.layertoggles .lt-label{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-right:2px}
+.ltoggle{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:7px 12px;border-radius:999px;font-weight:800;font-size:13px;font-family:inherit;cursor:pointer}
+.ltoggle .dot{margin-right:0}
+.ltoggle[aria-pressed="false"]{opacity:.45}
+.ltoggle[aria-pressed="false"] .dot{background:transparent!important;border:2px solid var(--muted);box-sizing:border-box}
+.calc-loaded{display:none;background:var(--gold-bg);border:1px solid #e8d9a0;border-radius:12px;padding:12px 14px;font-size:14px;margin-bottom:14px}
+.calc-loaded.show{display:block}
+@keyframes calcflash{0%{box-shadow:0 0 0 0 rgba(181,137,46,0)}25%{box-shadow:0 0 0 3px rgba(181,137,46,.8)}100%{box-shadow:0 0 0 0 rgba(181,137,46,0)}}
+.calcflash{animation:calcflash 1.4s ease-in-out 2;border-radius:18px}
+@media (prefers-reduced-motion: reduce){.calcflash{animation:none;outline:3px solid var(--brass)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="hero">
+<div class="kicker">Davidson County public records · Pulled Oct 28, 2026 · Rolling 12 months: Oct 28, 2025 – Oct 28, 2026</div>
+<h1>Three areas. One stacked list. <em>Every pin is a public record.</em></h1>
+<p class="lede">This dashboard covers only <strong>Green Hills (37215)</strong>, <strong>Belle Meade / West Meade (37205)</strong>, and the <strong>City of Oak Hill</strong> inside 37220 (isolated by county tax district, not the whole ZIP). Your screen — single-family, built before 1985, finished area under 30% of the lot, lot ≥ 5,000 sq ft — was run against county assessor parcels, building characteristics, Metro Codes cases, and Metro issued permits, then stacked with your 8 signals — after your owner exclusion: properties owned for under 5 years and properties owned by non-individuals (business entities — LLCs, corporations, partnerships, builders/developers) are excluded; trusts and estates of named individuals count as individuals and stay. Properties currently listed for sale on the MLS are also excluded — Redfin (RealTracs) Active + Coming Soon listings matched by address, pulled Oct 28, 2026. And an offer-acceptance screen removes any property where the offer you can make — the calculator's contract price: the modeled new-build exit minus build cost, soft costs, and builder profit, minus your $15,000 target fee — is not above what the owner last paid for it, or falls below 90% of the county total appraisal (land + improvement appraisals combined); a property with no recorded sale is judged on the appraisal test only. The build cost in that math is no longer one flat assumption: each property now carries its own planned new-build size — the lesser of what its zoning actually allows on its lot and what builders demonstrably build on comparable lots — and its own build cost per sq ft ($315 in Metro Nashville, $350 in Belle Meade, Forest Hills, and Oak Hill), plus a $20,000 demolition allowance. The “Planned size &amp; build cost” section below shows the rules, the numbers, and their sources. Hover or tap any pin for the full record; the ranked table under the map mirrors the green stacked pins, and clicking a stacked property — on the map or in the table — loads its numbers straight into the calculators further down.</p>
+<p style="font-size:13px;color:var(--muted)">Scope note: the ZIP written as “32705” in the request is read as <strong>37205</strong> (Belle Meade / West Meade) — there is no Nashville 32705. Incarceration is removed from the stack, as instructed. Probate is now hunted two ways: title held by an estate in assessor records, plus an obituary check on the longest-tenure individual owners — that pass has already confirmed 4 deceased owners still on title (see the signal section).</p>
+<div class="verdict">
+<h2>The stack at a glance</h2>
+<p>3,174 properties are on the list across the three areas — the 8,677 that pass the screen, minus 2,929 removed by your owner exclusion (2,824 owned for under 5 years, 416 owned by non-individuals, overlap counted once; trusts and estates of named individuals stay), minus 49 currently listed for sale on the MLS (Redfin/RealTracs Active + Coming Soon, matched by address, pulled Oct 28, 2026), minus 2,525 removed by the offer-acceptance screen — properties where your modeled contract price is not above what the owner last paid, or is below 90% of the county total appraisal (2,520 failed the appraisal test, 731 failed the last-sale test, 726 failed both). The screen now prices every property individually — its own zoning-capped, market-checked build size and its own jurisdiction's build cost — which is stricter than the old flat model (4,500 sq ft × $275): a net 1,029 more removals — 1,031 properties newly removed, 2 let back in. The map below pins the 719 highest-value of them: every property with 2+ signals (219), plus the top 500 one-signal properties by land appraisal. Ranking is your rule — unweighted signal count first, then land appraisal.</p>
+<div class="verdict-grid">
+<div class="vcard"><b>3,174</b><span>Properties on the list after the owner, MLS + offer-acceptance exclusions (37205: 1,834 · 37215: 1,011 · Oak Hill: 329)</span></div>
+<div class="vcard"><b>219</b><span>Properties with 2+ signals — all pinned in green on the map</span></div>
+<div class="vcard"><b>3</b><span>Properties at the top of the stack with 4 signals (14 have 3)</span></div>
+<div class="vcard"><b>909</b><span>Permits in 12 mo — 130 demolitions + 779 new construction (37215 + 37205; see Oak Hill note)</span></div>
+</div>
+</div>
+<div class="areas">
+<div class="acard"><span class="tag">Whale ZIP</span><h3>37215 — Green Hills</h3>
+<div class="metric"><span>Properties on the list</span><b>1,011</b></div>
+<div class="metric"><span>Pinned on the map (green)</span><b>129 (53 with 2+ signals)</b></div>
+<div class="metric"><span>Permits, 12 mo</span><b>44 demo · 331 new</b></div>
+<div class="metric"><span>$2M+ sales, 12 mo</span><b>145 (37 new-build)</b></div></div>
+<div class="acard"><span class="tag">Whale ZIP — price</span><h3>37205 — Belle Meade / West Meade</h3>
+<div class="metric"><span>Properties on the list</span><b>1,834</b></div>
+<div class="metric"><span>Pinned on the map (green)</span><b>587 (165 with 2+ signals)</b></div>
+<div class="metric"><span>Permits, 12 mo</span><b>86 demo · 448 new</b></div>
+<div class="metric"><span>$2M+ sales, 12 mo</span><b>134 (47 new-build)</b></div></div>
+<div class="acard"><span class="tag">Best spread — city only</span><h3>37220 — City of Oak Hill only</h3>
+<div class="metric"><span>Properties on the list</span><b>329</b></div>
+<div class="metric"><span>Pinned on the map (green)</span><b>3 (1 with 2+ signals)</b></div>
+<div class="metric"><span>Permits, 12 mo</span><b>Not in Metro feed — see note</b></div>
+<div class="metric"><span>$2M+ sales, 12 mo</span><b>25 (1 new-build)</b></div></div>
+</div>
+<div class="warn"><strong>Oak Hill permits:</strong> the City of Oak Hill issues its own municipal building permits, so Metro's feed shows essentially no Oak Hill pins — of the 89 permits in ZIP 37220 last year, none sat inside Oak Hill city limits. The blue permit layer therefore effectively covers 37215 + 37205. Oak Hill activity is visible on the map's stacked and sales layers instead.</div>
+</header>
+
+<section>
+<h2 class="sec">The 8-signal stack — what verifies, and what doesn't</h2>
+<p class="sub">Five of your eight signals verify in bulk from Davidson County public records. Three have <strong>no bulk public source</strong> in this county, so they are carried as per-property checks in every detail card — never shown as verified data. Counts below are across all 3,174 properties on the list — after the owner exclusion (under-5-year tenure and non-individual owners removed; trusts and estates of named individuals stay), the MLS exclusion (49 properties currently listed for sale removed — Redfin/RealTracs Active + Coming Soon, matched by address, pulled Oct 28, 2026), and the offer-acceptance screen (2,525 removed where the per-property modeled contract price was not above the owner's last recorded sale price, or was below 90% of the county total appraisal — land + improvement combined).</p>
+<div class="siggrid">
+<div class="sigcard"><b>Absentee owner</b><span class="n">348</span><p>Owner mailing street ≠ property street, from assessor records. Bulk-verified.</p></div>
+<div class="sigcard"><b>HPR-size proxy</b><span class="n">1,729</span><p>Lot ≥ 15,000 sq ft in an R/RS district. A <em>proxy</em> — and the size/cost model now applies the stricter legal rule: a two-unit HPR exit is modeled <strong>only in Metro R districts</strong> (RS is single-family only — no HPR), on lots ≥ 15,000 sq ft. Of the 5,699 properties modeled before the offer screen, 443 qualified for the two-unit play; 64 of them survive on the list. Overlays and lot configuration still verify per parcel.</p></div>
+<div class="sigcard"><b>Code violations</b><span class="n">78</span><p>At least one Metro Codes property-standards case on the parcel. Bulk-verified.</p></div>
+<div class="sigcard"><b>Vacant (codes-indicated)</b><span class="n">6</span><p>A codes case indicating vacant/boarded. Bulk-verified from Codes records.</p></div>
+<div class="sigcard"><b>Probate / estate</b><span class="n">0 titled estates · 3 obituary hits on the list</span><p>No parcel in this pull is titled to an estate — but the obituary pass on the 30 longest-tenure individual owners confirmed <strong>4 deceased owners still on title</strong>. Three remain on the list: Owen M. Hines Jr., 3913 Cross Creek Rd (d. 1991) · Sidney Faye, 1031 Davidson Rd (d. 1988) · Grace L. Sandefur, 29 Vaughns Gap Rd (d. 2020). The fourth, Boyd A. Simmons, 2234 Castleman Dr (d. Dec 2024), was removed by the offer-acceptance screen — under the per-property model it prices as a two-unit HPR play with a $700,000 contract price, still below 90% of its $964,000 total appraisal ($867,600), so the property no longer appears on the map or in the table. The surviving three carry the death evidence on their detail cards; the other 26 checked owners show no obituary hit, and unchecked owners show “obituary check pending.”</p></div>
+<div class="sigcard"><b>Tax delinquent</b><span class="n">Per-property check</span><p>No bulk feed. Davidson's delinquent list publishes only as the Clerk &amp; Master newspaper ad ~3 weeks before each tax sale — next ad Oct 30, 2026, for the Nov 18, 2026 sale.</p></div>
+<div class="sigcard"><b>Pre-foreclosure</b><span class="n">Per-property check</span><p>No bulk feed. Foreclosure notices run in the Nashville Ledger; verify per property on anything you rank highly.</p></div>
+<div class="sigcard"><b>High tax increase</b><span class="n">Per-property check</span><p>Appraisal history is per-parcel on the assessor site (2025 was a reappraisal year). Check the record card before outreach.</p></div>
+</div>
+<h3 style="margin:20px 0 4px;font-size:16px">Signal distribution — all 3,174 properties on the list</h3>
+<div id="distchart"></div>
+</section>
+
+<section>
+<h2 class="sec">One map — the stack, the permits, and the new-build exits</h2>
+<p class="sub">All three datasets on a single map, color-coded by layer: <strong style="color:#2e6b3e">green = the 719 stacked-list properties</strong> (darker and larger = more signals), <strong style="color:#1e5aa8">blue = building permits</strong> from the last 12 months (deep blue = demolition, lighter blue = new construction; Metro-issued, so the blue layer covers 37215 + 37205 — Oak Hill permits itself, see the note under the area cards), and <strong style="color:#a87f00">yellow = the 85 verified new-build sales at $2M+</strong>. Use the layer toggles under the map to show or hide each dataset — all three start on. Hover a pin for the summary; click any pin, or any row in the ranked table below, for the full public-record card. Clicking a green stacked property also loads its numbers into the two calculators further down this page and recomputes them.</p>
+<div class="maplayout">
+<div class="mapbox"><div class="mapel" id="mapAll"></div>
+<div class="layertoggles" role="group" aria-label="Map layers">
+<span class="lt-label">Layers</span>
+<button type="button" class="ltoggle" id="layerStacked" aria-pressed="true"><i class="dot" style="background:#2e6b3e"></i>Stacked properties · 719</button>
+<button type="button" class="ltoggle" id="layerPermits" aria-pressed="true"><i class="dot" style="background:#1e5aa8"></i>Permits · 909</button>
+<button type="button" class="ltoggle" id="layerSales" aria-pressed="true"><i class="dot" style="background:#d9a400"></i>New-build sales $2M+ · 85</button>
+</div></div>
+<div class="detail" id="allDetail"><h3>Record detail</h3><p class="hint">Loading county records… Click any pin on the map or any row in the ranked table below and the full public-record card appears here — property, permit, or sale, depending on the pin.</p></div>
+</div>
+<p class="loadmsg" id="stackedMsg"></p>
+<div class="card" style="margin-bottom:16px"><h3>Most active permit applicants (demo + new, 12 mo)</h3>
+<p style="font-size:14px;margin:6px 0">Wilson &amp; Sons Land Management LLC — 19 permits · Cobalt Building Group LLC — 11 · Drees Premier Homes Inc — 11 · Elliott Development LLC — 10.</p>
+<p style="font-size:13px;color:var(--muted);margin:6px 0 0">“SELF CONTRACTOR RESIDENTIAL” (29 permits) is a permit-office category, not a builder, so it is excluded from the ranking. These are the builders already buying and building in your three areas — your dispo list, straight from the permit record behind the blue pins.</p></div>
+<div class="filters">
+<div><label for="fArea">Area</label><select id="fArea"><option value="">All three areas</option><option value="Green Hills (37215)">Green Hills (37215)</option><option value="Belle Meade/West Meade (37205)">Belle Meade / West Meade (37205)</option><option value="Oak Hill (37220)">Oak Hill (37220)</option></select></div>
+<div><label for="fSig">Minimum signals</label><select id="fSig"><option value="1">1+</option><option value="2" selected>2+</option><option value="3">3+</option><option value="4">4</option></select></div>
+</div>
+<h3 style="margin:6px 0 8px;font-size:17px">Ranked list — top of the stack first</h3>
+<div style="overflow-x:auto"><table class="resp" id="stackedTable"><thead><tr><th>#</th><th>Signals</th><th>Address</th><th>Area</th><th>Owner</th><th>Built</th><th>Coverage</th><th>Land appraisal</th><th>Last sale</th></tr></thead><tbody></tbody></table></div>
+<p class="hint" id="tableNote"></p>
+</section>
+
+<section id="newbuilds">
+<h2 class="sec">New-build sales at $2M+ — last 12 months</h2>
+<p class="sub">These are the yellow pins on the map above — recent new-build sales only. Of the 304 sales at $2M+ in the last 12 months, <strong>85 are verified new builds</strong> — a new-construction permit on the parcel since 2021, or assessor year built ≥ 2023 (each row says which). Window: Oct 28, 2025 – Oct 28, 2026, from assessor deed records. These 85 exits are the proof of what builders can sell a finished teardown replacement for in each area; the other 219 sales in the full $2M+ set are existing homes and are not plotted — the biggest of them, 501 Shadowood Dr at $41,500,000, is a resale, not a teardown exit.</p>
+<div class="nbstats">
+<div class="nbstat"><b>85</b><span>Verified new-build sales at $2M+ in 12 months</span></div>
+<div class="nbstat"><b>$3.7M</b><span>Median new-build sale price ($379.5M combined volume)</span></div>
+<div class="nbstat"><b>20</b><span>New builds sold at $5M or more</span></div>
+<div class="nbstat"><b>11 in Apr 2026</b><span>Peak month — every month in the window had at least 2</span></div>
+</div>
+<div class="areas">
+<div class="acard"><span class="tag">Most new-build exits</span><h3>37205 — Belle Meade / West Meade</h3>
+<div class="metric"><span>New-build sales $2M+</span><b>47</b></div>
+<div class="metric"><span>Median price</span><b>$3,900,000</b></div>
+<div class="metric"><span>Combined volume</span><b>$228.2M</b></div>
+<div class="metric"><span>Top new-build sale</span><b>$14,580,000 · 92 White Bridge Pike, Dec 23, 2025</b></div></div>
+<div class="acard"><span class="tag">Volume + HPR exits</span><h3>37215 — Green Hills</h3>
+<div class="metric"><span>New-build sales $2M+</span><b>37</b></div>
+<div class="metric"><span>Median price</span><b>$2,999,900</b></div>
+<div class="metric"><span>Combined volume</span><b>$147.0M</b></div>
+<div class="metric"><span>Top new-build sale</span><b>$13,629,431 · 3715 Hillsboro Pike, Jun 17, 2026</b></div></div>
+<div class="acard"><span class="tag">Thin new-build record</span><h3>37220 — City of Oak Hill only</h3>
+<div class="metric"><span>New-build sales $2M+</span><b>1</b></div>
+<div class="metric"><span>The one verified sale</span><b>$4,250,000 · 825 Forest Hills Dr, May 21, 2026</b></div>
+<div class="metric"><span>All $2M+ sales</span><b>25 — the other 24 are existing homes</b></div>
+<div class="metric"><span>Read</span><b>Oak Hill's $2M+ market is resale, not recorded new-build exits</b></div></div>
+</div>
+<h3 style="margin:20px 0 4px;font-size:16px">Where the new-build prices land</h3>
+<div id="nbbands"></div>
+<div class="grid2" style="margin-top:16px">
+<div class="card"><h3>Builders named on these sales</h3>
+<p style="font-size:14px;margin:6px 0">63 of the 85 sales name a builder/applicant from the parcel's permit record. Most frequent: <strong>Paros Group LLC — 6 sales</strong> · <strong>Brett Hesselrode — 5</strong> · <strong>Build Nashville LLC — 3</strong> · Cobalt Ventures LLC — 2 · Province Builders LLC — 2.</p>
+<p style="font-size:13px;color:var(--muted);margin:6px 0 0">Read the field as “named on the permits,” not gospel: on some parcels the named applicant is a specialty contractor (pools, landscaping) rather than the home builder. The repeat names above are the ones closing $2M+ product in these streets — they overlap the permit-activity leaders among the map's blue pins.</p></div>
+<div class="card"><h3>HPR pairs clear $2M per side</h3>
+<p style="font-size:14px;margin:6px 0">11 of the 85 are A/B split-lot addresses — two homes sold off one original lot, each at $2M+. Cleanest example: <strong>1609 A &amp; B Shackleford Rd</strong> (Green Hills) both sold Aug 31, 2026 — $3,052,027 and $2,999,999, Paros Group on both. 3425 A/B Richards St and 2022 A/B Galbraith Dr did the same.</p>
+<p style="font-size:13px;color:var(--muted);margin:6px 0 0">For your stack, that's the exit math behind the HPR-size proxy flag: in Green Hills a splittable lot doesn't need one $4M+ buyer — two ~$2–3M exits do the work.</p></div>
+</div>
+<div class="filters">
+<div><label for="nbArea">Area</label><select id="nbArea"><option value="">All three areas</option><option value="Green Hills (37215)">Green Hills (37215)</option><option value="Belle Meade/West Meade (37205)">Belle Meade / West Meade (37205)</option><option value="Oak Hill (37220)">Oak Hill (37220)</option></select></div>
+<div><label for="nbSort">Sort</label><select id="nbSort"><option value="recent" selected>Most recent first</option><option value="high">Highest price first</option><option value="low">Lowest price first</option></select></div>
+<div><label for="nbSearch">Builder or address contains</label><input id="nbSearch" type="search" placeholder="e.g. Paros, Sneed, Cobalt"></div>
+</div>
+<div class="detail" id="nbDetail" style="margin-bottom:14px"><h3>New-build sale detail</h3><p class="hint">Loading sales records… Click any row in the table below and the full sale record appears here (the same card the map's yellow pins use).</p></div>
+<h3 style="margin:6px 0 8px;font-size:17px">All 85 verified new-build sales at $2M+</h3>
+<div style="overflow-x:auto"><table class="resp" id="nbTable"><thead><tr><th>Date</th><th>Address</th><th>Area</th><th>Price</th><th>Buyer (owner of record)</th><th>Builder (from permits)</th><th>Verified by</th><th>Lot</th></tr></thead><tbody></tbody></table></div>
+<p class="hint" id="nbNote"></p>
+</section>
+
+<section id="calculators">
+<h2 class="sec">Work the numbers — your two checkers</h2>
+<p class="sub">The same screen and spread logic the list was built with, so any candidate you find off-list gets judged identically. Both checkers recompute as you type — and clicking any green pin on the map, or any row in the ranked table, loads that property's numbers in here automatically.</p>
+<div class="calc-loaded" id="calcLoaded" role="status"></div>
+<div class="grid2">
+<div class="card">
+<h3>Coverage &amp; age checker</h3>
+<label for="yr">Year built</label><input id="yr" type="number" value="1953" min="1800" max="2026">
+<label for="living">Living area (sq ft)</label><input id="living" type="number" value="1450">
+<label for="lotsf">Lot size (sq ft) — or use acres below</label><input id="lotsf" type="number" value="43560">
+<label for="lotac">Lot size in acres (overrides sq ft if filled)</label><input id="lotac" type="number" step="0.01" placeholder="e.g. 1.04">
+<button class="btn" id="btnScreen" type="button">Check this property</button>
+<div class="result" id="screenOut">Enter a property to check it.</div>
+<p style="font-size:13px;color:var(--muted)">Reference point: a 1953, 1,450 sq ft house on a 1-acre lot = 3.3% coverage — passes easily. The screen also requires single-family and a lot of at least 5,000 sq ft.</p>
+</div>
+<div class="card">
+<h3>Teardown spread checker</h3>
+<p style="font-size:14px;color:var(--muted);margin-top:0">The contract price is <em>computed</em>, never copied from what the owner paid: builder max land price = expected exit − build cost − soft costs − builder profit, and your contract price = that max minus your target assignment fee — so exactly your fee sits between what you contract at and what the builder can pay. It recomputes live as you change any input, and again on every property click. <strong>Size and cost are set per property:</strong> clicking a property loads <em>its</em> planned size — the lesser of its zoning cap and the market-demonstrated size for its lot band, or a two-unit HPR plan where the lot legally allows one — and <em>its</em> jurisdiction's build cost ($315/sq ft Metro, $350/sq ft in Belle Meade, Forest Hills, and Oak Hill), plus a $20,000 demolition allowance. Edit any of them and the model follows your numbers. This same contract price drives the offer-acceptance screen on the list above: a property stays on the list only if its contract price is above what the owner last paid <em>and</em> at least 90% of the county total appraisal — under this per-property model that screen removed 2,525 properties, and the checker below re-tests the loaded property against both rules at your current settings.</p>
+<label for="exit">Expected new-build exit ($)</label><input id="exit" type="number" value="2430000">
+<label for="nbSize">Planned new-build size (sq ft) — set per property on click</label><input id="nbSize" type="number" value="5200">
+<label for="buildPsf">Build cost ($ per sq ft) — set by jurisdiction on click</label><input id="buildPsf" type="number" value="315">
+<label for="demoCost">Demolition allowance ($, added to build cost)</label><input id="demoCost" type="number" value="20000">
+<label for="softPct">Soft costs (% of exit — permits, design, carry, closing)</label><input id="softPct" type="number" step="0.5" value="8">
+<label for="profitPct">Builder profit (% of exit)</label><input id="profitPct" type="number" step="0.5" value="15">
+<label for="fee">Your target assignment fee ($)</label><input id="fee" type="number" value="15000">
+<label for="buy">Contract price ($) — computed: builder max land price − your fee</label><input id="buy" type="number" readonly>
+<label for="refLand">County land appraisal of loaded property (reference)</label><input id="refLand" type="text" readonly placeholder="Loads when you click a property">
+<label for="refTotal">County total appraisal of loaded property (reference)</label><input id="refTotal" type="text" readonly placeholder="Loads when you click a property">
+<button class="btn" id="btnSpread" type="button">Check the spread</button>
+<div class="result" id="spreadOut">The contract price is computed from the exit model as soon as the page loads.</div>
+<p style="font-size:13px;color:var(--muted)">Sanity anchors from the research: Oak Hill Valley originals $1,862,500 → replacements $4,975,000 · Highlands of Belle Meade $1,637,500 → $2,900,000 (thinnest spread — price discipline matters most in 37205).</p>
+</div>
+</div>
+</section>
+
+<section id="sizecost">
+<h2 class="sec">Planned size &amp; build cost — set per property, not one flat guess</h2>
+<p class="sub">The old model priced every lot as the same 4,500 sq ft build at $275/sq ft. That misprices both ends: it overstates what a small or tightly-zoned lot can carry, and understates the cost of the luxury product these streets actually sell. The model now sets two inputs <strong>per property</strong> before the spread math runs:</p>
+<div class="grid2">
+<div class="card"><h3>Planned size = the lesser of two numbers</h3>
+<p style="font-size:14px;margin:6px 0"><strong>1. What zoning allows on that lot</strong> (living sq ft, garage taken out of the cap):</p>
+<p style="font-size:14px;margin:6px 0"><strong>Metro Nashville</strong> has <em>no floor-area cap</em> — size is capped by lot coverage × 2 stories, with the garage inside the footprint (Metro Code Table 17.12.020A): RS40/R40 25% · RS30 30% · RS20/R20 35% · RS15/R15 35% · RS10/R10 40% · R8/RS7.5 45% · R6/RS5 50%. Height is separately capped at 2.5 stories / 35 ft in most districts under BL2025-1006 (RS40/R40 keep 3 stories), and a contextual front setback — in Green Hills routinely 50–100+ ft — can bind before coverage does.</p>
+<p style="font-size:14px;margin:6px 0"><strong>City of Belle Meade</strong> (county zoning code 3ZZ) has a real floor-area ratio: 0.225 × lot on lots ≤ 40,000 sq ft, 0.20 above, gross floor area capped at 20,000 sq ft <em>including garages</em>, footprint ≤ 12% of lot (8% in Estates A) — Ordinance 2024-14, §14-205.</p>
+<p style="font-size:14px;margin:6px 0"><strong>City of Forest Hills</strong> (5ZZ) sets FAR by district from 0.075 (E1A) to 0.180 (NC1/NC2), primary structure capped at 25,000 sq ft — Ordinance 2024-03, Table 4.02. County records don't carry the parcel's Forest Hills district, so these lots are modeled at a 0.13 central FAR.</p>
+<p style="font-size:14px;margin:6px 0"><strong>City of Oak Hill</strong> (8ZZ) is modeled on its Zone C standard: gross floor area ≤ 0.18 × lot, capped at 10,000 sq ft. ⚠️ That figure rests on a single secondary summary of the city's posted Bulk Building Standards — the codified per-zone tables could not be verified — so treat Oak Hill sizes as the model's softest input and confirm with the city before underwriting.</p>
+<p style="font-size:14px;margin:6px 0"><strong>2. What builders demonstrably build</strong> — from the 20 assessor-confirmed new builds among this page's 85 verified $2M+ new-build sales. Finished size barely scales with lot size: lots ≤ 25,000 sq ft → <strong>5,350 sq ft</strong> median · 25,000–43,560 sq ft → <strong>6,012 sq ft</strong> · over an acre → <strong>5,200 sq ft</strong>. Median new build overall: <strong>5,861 sq ft</strong>, selling at a median ~$695 per finished sq ft. Bigger lots mostly buy yard, not house — so the market number, not the zoning maximum, is what usually binds.</p>
+<p style="font-size:14px;margin:6px 0"><strong>HPR two-unit play:</strong> where a lot is in a Metro <strong>R district</strong> (never RS) and ≥ 15,000 sq ft, the model prices two homes instead of one: exit = 2 × the per-side exit from actual HPR-side sales (the 11 A/B sales on this page run $2.0M–$3.05M per side), planned size = 2 × 4,700 sq ft (observed Green Hills HPR production runs 4,383–5,447 sq ft of living area per unit), capped by the same coverage rule with two garages. 443 of the 5,699 modeled properties qualify; 64 survive the offer screen.</p>
+</div>
+<div class="card"><h3>Build cost = the jurisdiction's tier, plus demolition</h3>
+<p style="font-size:14px;margin:6px 0"><strong>$350/sq ft</strong> in Belle Meade, Forest Hills, and Oak Hill · <strong>$315/sq ft</strong> in Metro Nashville — hard cost per finished sq ft for the luxury spec product that sells at $2M–$5M, excluding land, plus a flat <strong>$20,000 demolition allowance</strong> per property. Soft costs (8% of exit) and builder profit (15% of exit) are unchanged.</p>
+<p style="font-size:14px;margin:6px 0">Where the tiers come from: the recommended modeling range for Nashville luxury spec builds is <strong>$325–$425/sq ft</strong> (central ≈ $350) — NAHB's 2024 cost survey puts average construction cost at ~$162/sq ft nationally (production and custom mixed), Nashville custom builders publish $200–$350+/sq ft with luxury at $400+, and one real Brentwood-area lender package prices at $255.90/sq ft vertical plus ~$77/sq ft of site and program cost — ≈ $333/sq ft all-in. The Metro tier sits just under the band because Green Hills / West Meade product skews to the band's lower half; the satellite-city tier sits at the band's center. Aggregator sites (HomeBlue, Houzeo) publish far lower Nashville figures ($120–$210/sq ft) — they describe builder-grade product, not this segment, and are not used.</p>
+<p style="font-size:14px;margin:6px 0">Demolition: HomeBlue's Nashville guide (aggregator) puts a house teardown at $8,800–$18,500 depending on size and basement, before permits, utility disconnects, and asbestos survey/abatement on pre-1985 houses — the recommended all-in modeling figure is $15,000–$30,000; the model uses $20,000.</p>
+<p style="font-size:14px;margin:6px 0">Nashville-specific risks the flat allowance can't see: shallow limestone shelf rock across the Belle Meade / Oak Hill / Forest Hills hills (excavation-method changes, foundation redesign, delay), Metro green-infrastructure stormwater requirements even on single-family permits, Belle Meade's 8% hardscape cap, Forest Hills impervious-surface caps, and Oak Hill's steep-slope and tree-canopy review. Price them per deal, not per model.</p>
+<div class="note"><strong>What changed on the list:</strong> re-running the offer screen with per-property size and cost moved the list from 4,203 to <strong>3,174</strong> properties (2,525 eliminated under the new model; 2 properties the flat model killed came back). Worked examples from the pinned set: <strong>166 Haverford Dr</strong> — planned 6,012 sq ft at $315 (RS20, Metro) — contract price repriced from $2,023,878 (flat model) to <strong>$1,347,598</strong>. <strong>3913 Cross Creek Rd</strong> survives only as an HPR play: two-unit exit $4,800,000, planned 9,400 sq ft total, contract <strong>$700,000</strong> against a $652,860 pass threshold (90% of its $725,400 appraisal). <strong>1010 Downey Dr</strong> (4 signals) is out — at a real 6,012 sq ft build its exit can't carry the costs and the contract price goes negative (−$7,630).</div>
+</div>
+</div>
+</section>
+
+<section>
+<h2 class="sec">From list to contract — the playbook for these three areas</h2>
+<div class="steps">
+<div class="step"><div><b>1. Work the stack top-down</b><br><span style="color:var(--muted);font-size:14px">Start with the 3 four-signal and 14 three-signal properties. Before any outreach, run the three per-property checks the bulk data can't do: Clerk &amp; Master delinquent status (next newspaper ad Oct 30, 2026, ahead of the Nov 18 sale), Nashville Ledger foreclosure notices, and the assessor record card's appraisal history.</span></div></div>
+<div class="step"><div><b>2. Verify HPR per parcel before you pitch a split</b><br><span style="color:var(--muted);font-size:14px">The HPR flag on this page is a size/zoning proxy only — and the legal rule is narrower than the flag: two-family HPR is allowed only in Metro <strong>R districts</strong> (never RS, which is single-family only), on a lot meeting the district minimum, with both units together inside the parcel's coverage cap and each detached unit no taller than 1.5× its width. The model already restricts the two-unit exit to R-district lots ≥ 15,000 sq ft (443 of the 5,699 modeled; 64 survive the offer screen). Confirm zoning, overlays, and lot configuration on the Metro Parcel Viewer for the specific parcel — an overlay can block both the split and the demolition itself.</span></div></div>
+<div class="step"><div><b>3. Trace only the top — Tracerfy</b><br><span style="color:var(--muted);font-size:14px">Skip tracing stays gated exactly as in your Houston system: Tracerfy at ~2¢/hit, only on properties already ranked by the stack (2+ signals first), never the whole 3,174-property list. Run your 5-owner accuracy-test discipline on Nashville owners before any bulk trace. Free first pass: the assessor record itself — owner name, mailing address, and sale history often identify an estate, trust, or LLC whose registered agent is findable in Tennessee Secretary of State business records at $0.</span></div></div>
+<div class="step"><div><b>4. Contract Tennessee-shaped — SB 909</b><br><span style="color:var(--muted);font-size:14px">Tennessee's first wholesaling statute (Public Chapter 72, effective March 25, 2025; Tenn. Code Ann. §§66-4-401–403) keeps assignment legal <em>with</em>: written disclosure to the seller, in bold, large-font print in the agreement, that you're acquiring an equitable interest and intend to market/assign it; disclosure of the interest's nature to the end buyer; and written notice to the seller at least 3 business days before an assignment takes effect. Market your contract, never the house. Confirm the enrolled text with a Tennessee attorney before contracting.</span></div></div>
+<div class="step"><div><b>5. Sell to the builders already on the map</b><br><span style="color:var(--muted);font-size:14px">The blue permit layer is your dispo radar: the applicants pulling demolition and new-construction permits in 37215 and 37205 this year are the buyers already paying for lots in these exact streets. No builder publishes a teardown buy-box — acquisition runs through relationships, and the permit record tells you whose door to knock on.</span></div></div>
+</div>
+</section>
+
+<div class="foot">
+<p><strong>Sources — all Davidson County / Metro Nashville public records, pulled Oct 28, 2026:</strong> county assessor parcels and building characteristics (owner, mailing address, year built, finished area, lot, zoning, appraisals, sale history) · Metro Codes property-standards cases (violations, vacant/boarded indicators) · Metro issued building permits, Oct 28, 2025 – Oct 28, 2026 (type, cost, applicant) · assessor deed records for the $2M+ sales. Earlier ZIP-level market context (medians, spreads, builder names) from the Oct 28, 2026 research behind this page, principally Nashville Home Guru's RealTracs-based pages for Green Hills, Belle Meade, and Oak Hill.</p>
+<p><strong>Sources — buildable size &amp; construction cost research, Oct 29, 2026:</strong> Metro Code Title 17, Table 17.12.020A bulk standards via <a href="https://www.zoneomics.com/code/nashville-TN/chapter_4" target="_blank" rel="noopener">Zoneomics' Metro Code text</a> and <a href="https://www.nashville.gov/departments/codes/construction-and-permits/building-permits-central/addition-single-family-residence" target="_blank" rel="noopener">Nashville.gov permit guidance</a> (coverage definition, contextual setbacks); BL2025-1006 height rule (2.5 stories / 35 ft in most RS/R districts) via Metro Legistar; City of Belle Meade <a href="https://citybellemeade.org/wp-content/uploads/2025/02/ORD-2024-14-ZO-Comprehensive-Amendment.pdf" target="_blank" rel="noopener">Ordinance 2024-14</a> (§14-205 development standards); City of Forest Hills <a href="https://core-docs.s3.us-east-1.amazonaws.com/documents/asset/uploaded_file/4226/CFH/5098863/2024-03_Ordinance_Changes__Revisions_.pdf" target="_blank" rel="noopener">Ordinance 2024-03</a> (§4.02 / Table 4.02); City of Oak Hill Plan Review Checklist and bulk-standards summary via <a href="https://vanderpoollaw.com/oak-hill-tn" target="_blank" rel="noopener">Vanderpool Law</a> (secondary source — see caveat 4a); NAHB Cost of Constructing a Home 2024 and NAHB/Census Survey of Construction analysis (Oct 2025); Nashville builder cost guides (Southern Belle Construction 2026, Syndicate Design &amp; Construction, Stellan Eoin Builders Oct 2025, Home Builders Digest); a Brentwood-area lender package (9717 Concord Rd: $255.90/sq ft vertical + ~$77/sq ft site &amp; program ≈ $333/sq ft all-in); <a href="https://www.homeblue.com/demolition/nashville-tn-cost-to-demolish-a-house.htm" target="_blank" rel="noopener">HomeBlue Nashville demolition guide</a> (aggregator). Market build sizes from the county's own records: the 20 assessor-confirmed new builds among the 85 verified $2M+ new-build sales.</p>
+<p><strong>Stated plainly:</strong> (1) The map's green layer pins 719 of the 3,174 properties on the list — every 2+ signal property plus the top 500 one-signal properties by land appraisal; the other one-signal and zero-signal properties are counted in the totals but not pinned. The list itself applies three exclusions to the 8,677 screen-pass properties: the owner exclusion — 2,929 removed (2,824 owned for under 5 years, 416 owned by non-individuals, overlap counted once); trusts and estates of named individuals count as individuals and stay — the MLS exclusion: 49 properties currently listed for sale were removed, matched by address against Redfin (RealTracs) Active + Coming Soon listings pulled Oct 28, 2026; the match file refreshes weekly in the daily job (the MLS picture is as of that pull — a property that went under contract after it would still show until the next match) — and the offer-acceptance exclusion: 2,525 removed where the modeled contract price (per-property new-build exit from the nearest verified new-build sales − that property's planned build size × its jurisdiction's build cost per sq ft − a $20,000 demolition allowance − 8% soft costs − 15% builder profit − the $15,000 target assignment fee) was not above the owner's last recorded sale price, or fell below 90% of the county total appraisal (land + improvement appraisals combined); properties with no recorded sale price were judged on the appraisal test only (2,520 failed the appraisal test, 731 failed the last-sale test, 726 failed both). (2) Tax delinquent, pre-foreclosure, and high tax increase have no bulk public source in Davidson County and appear only as per-property checks — no property on this page is shown as verified for them. (3) Probate shows 0 estate-titled parcels in this pull; the obituary-verification pass on the 30 longest-tenure individual owners is merged where it found evidence — 4 owners confirmed deceased and still on title, named in the signal section; three remain on the list and are flagged on their detail cards, while the fourth (2234 Castleman Dr) was removed by the offer-acceptance screen described above; owners not yet checked show “obituary check pending.” (4) The HPR flag is a lot-size/zoning proxy, not confirmed eligibility; the two-unit exit in the model is restricted to Metro R districts on lots ≥ 15,000 sq ft, because RS districts are single-family only. (4a) The planned-size and build-cost model (v2) rests on: Metro Code Table 17.12.020A coverage percentages (Metro has no floor-area cap — the cap is two stories over the coverage limit, garage inside the footprint); Belle Meade Ordinance 2024-14 FAR; Forest Hills Ordinance 2024-03 FAR range — the parcel's Forest Hills district is not in county data, so those lots are modeled at a 0.13 central FAR; and Oak Hill's Zone C standard (0.18 FAR, 10,000 sq ft cap), which rests on a single secondary summary of the city's posted standards and is the model's weakest input — verify with the City of Oak Hill before underwriting an Oak Hill deal. Contextual front setbacks (in Green Hills routinely 50–100+ ft) and overlays can bind below the coverage cap on individual lots. Construction costs are published-source ranges, not quotes: the luxury band $325–$425/sq ft comes from NAHB cost data, Nashville builder guides, and one Brentwood-area lender package (~$333/sq ft all-in); RSMeans/Marshall &amp; Swift figures are paywalled and were not obtained. Permit-stated construction costs in county records understate true hard costs and are used here only as a floor check. (5) This page is a snapshot of records pulled Oct 28, 2026; it does not refresh itself.</p>
+<p>Prepared for Coconut Property Ventures LLC — Nashville luxury teardown screening, three areas only. Not legal advice.</p>
+</div>
+</div>
+
+<script>
+function money(n){ if(n===null||n===undefined||n===''||isNaN(+n)) return '—'; n=+n; return n===0?'—':'$'+n.toLocaleString(); }
+function num(n){ if(n===null||n===undefined||n===''||isNaN(+n)) return '—'; return (+n).toLocaleString(); }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]}); }
+function titleCase(s){ return String(s||'').toLowerCase().replace(/\b\w/g,function(c){return c.toUpperCase()}); }
+
+/* Signal distribution chart */
+var DIST=[[4,3],[3,14],[2,202],[1,1706],[0,1249]];
+var dc=document.getElementById('distchart');
+DIST.forEach(function(r){ var pct=Math.round(r[1]/1706*100); var row=document.createElement('div'); row.className='bar-row';
+ row.innerHTML='<span>'+r[0]+' signal'+(r[0]===1?'':'s')+'</span><div class="bar"><i style="width:'+Math.max(pct,1)+'%"></i></div><b>'+r[1].toLocaleString()+'</b>'; dc.appendChild(row); });
+
+/* Calculators */
+function checkScreen(){
+ var yr=+document.getElementById('yr').value, liv=+document.getElementById('living').value;
+ var ac=parseFloat(document.getElementById('lotac').value); var lot=(!isNaN(ac)&&ac>0)? ac*43560 : +document.getElementById('lotsf').value;
+ var out=document.getElementById('screenOut');
+ if(!yr||!liv||!lot){out.textContent='Fill in year, living area, and lot size.';out.className='result';return}
+ var cov=liv/lot*100, agePass=yr<1985, covPass=cov<30, lotPass=lot>=5000;
+ out.className='result '+((agePass&&covPass&&lotPass)?'pass':'fail');
+ out.innerHTML=(agePass&&covPass&&lotPass?'✓ PASS — enters the Screen List. ':'✗ FAIL — does not enter the list. ')+'Built '+yr+' ('+(agePass?'pre-1985 ✓':'1985 or newer ✗')+') · Coverage '+cov.toFixed(1)+'% ('+(covPass?'under 30% ✓':'30% or over ✗')+') · Lot '+lot.toLocaleString()+' sq ft ('+(lotPass?'≥ 5,000 ✓':'under 5,000 ✗')+').';
+}
+var LOADED_PROP=null;
+/* The spread model. Builder max land price = expected exit − build cost
+   − soft costs − builder profit. Contract price = max land price − the
+   target assignment fee, so exactly the fee sits between what Bradley
+   contracts at and what the builder can pay. The contract price is an
+   OUTPUT of this model — it is never copied from a property's last sale
+   price (what the owner paid is reference only). */
+function spreadModel(){
+ var ex=+document.getElementById('exit').value||0;
+ var size=+document.getElementById('nbSize').value||0;
+ var psf=+document.getElementById('buildPsf').value||0;
+ var demo=+document.getElementById('demoCost').value||0;
+ var softPct=+document.getElementById('softPct').value||0;
+ var profitPct=+document.getElementById('profitPct').value||0;
+ var fee=+document.getElementById('fee').value||0;
+ var build=Math.round(size*psf)+demo, soft=Math.round(ex*softPct/100), profit=Math.round(ex*profitPct/100);
+ var maxLand=ex-build-soft-profit;
+ return {exit:ex, size:size, psf:psf, demo:demo, softPct:softPct, profitPct:profitPct, fee:fee, build:build, soft:soft, profit:profit, maxLand:maxLand, contract:maxLand-fee};
+}
+function checkSpread(){
+ var m=spreadModel();
+ var out=document.getElementById('spreadOut');
+ var buyEl=document.getElementById('buy');
+ if(!m.exit){ out.textContent='Enter an expected new-build exit — the contract price is computed from it.'; out.className='result'; buyEl.value=''; return; }
+ buyEl.value=m.contract;
+ var landPct=(m.maxLand/m.exit*100).toFixed(1);
+ out.className='result '+((m.contract>0 && +landPct<=35)?'pass':'fail');
+ var ref='';
+ if(LOADED_PROP){
+  ref=' For '+esc(titleCase(LOADED_PROP.address))+': county land appraisal '+money(LOADED_PROP.land_appraisal)+', total appraisal '+money(LOADED_PROP.total_appraisal)+'; the owner last paid '+(LOADED_PROP.last_sale_price?money(LOADED_PROP.last_sale_price)+' ('+esc(LOADED_PROP.last_sale_date||'')+')':'— (no recorded sale)')+' — reference only; the contract price is computed from the exit model, not from what the owner paid.';
+  var thr=Math.round((+LOADED_PROP.total_appraisal||0)*0.9);
+  var hasSale=!!(LOADED_PROP.last_sale_price && +LOADED_PROP.last_sale_price>0);
+  var passSale=!hasSale || m.contract>+LOADED_PROP.last_sale_price;
+  var passAppr=(+LOADED_PROP.total_appraisal||0)>0 ? m.contract>=thr : true;
+  ref+=' <strong>Offer-acceptance screen:</strong> contract price '+money(m.contract)+' is '+(hasSale?(passSale?'above':'NOT above')+' the last sale price '+money(LOADED_PROP.last_sale_price):'not tested against a last sale (none recorded)')+' and '+(passAppr?'at or above':'BELOW')+' 90% of the total appraisal ('+money(thr)+') — '+(passSale&&passAppr?'this property <strong>passes</strong> both tests at the current settings.':'at these settings this property would be <strong>eliminated</strong> by the screen.');
+ }
+ out.innerHTML='The chain: expected exit '+money(m.exit)+' − build cost '+money(m.build)+' ('+num(m.size)+' sq ft × '+money(m.psf)+'/sq ft + '+money(m.demo)+' demolition) − soft costs '+money(m.soft)+' ('+m.softPct+'% of exit) − builder profit '+money(m.profit)+' ('+m.profitPct+'% of exit) = <strong>builder max land price '+money(m.maxLand)+'</strong> ('+landPct+'% of exit) − your target assignment fee '+money(m.fee)+' = <strong>contract price '+money(m.contract)+'</strong>.'+(m.contract<=0?' That contract price is not positive — at these cost and profit assumptions the exit does not support this fee; lower the fee or the costs, or walk.':'')+ref;
+}
+checkScreen(); checkSpread();
+
+/* Calculator wiring — listeners attached here in the main script (no inline
+   handlers), and both checkers recompute live on every input change. */
+document.getElementById('btnScreen').addEventListener('click', checkScreen);
+document.getElementById('btnSpread').addEventListener('click', checkSpread);
+['yr','living','lotsf','lotac'].forEach(function(id){ document.getElementById(id).addEventListener('input', checkScreen); });
+['exit','nbSize','buildPsf','demoCost','softPct','profitPct','fee'].forEach(function(id){ document.getElementById(id).addEventListener('input', checkSpread); });
+
+/* Load a stacked property record into both calculators and recompute.
+   Coverage checker: year built, finished area, lot sq ft (acres cleared so
+   sq ft governs). Spread checker: the record's land and total appraisals
+   load as reference fields and its derived expected new-build exit loads
+   as the exit; the contract price is then COMPUTED by the spread model
+   (builder max land price − target assignment fee) — never copied from
+   the last sale price, which is shown only as what-the-owner-paid
+   reference. */
+function medianOf(vals){ var s=vals.slice().sort(function(a,b){return a-b}); var m=Math.floor(s.length/2); return s.length%2? s[m] : Math.round((s[m-1]+s[m])/2); }
+function distMi(aLat,aLon,bLat,bLon){ var R=3958.8, dLa=(bLat-aLat)*Math.PI/180, dLo=(bLon-aLon)*Math.PI/180; var h=Math.sin(dLa/2)*Math.sin(dLa/2)+Math.cos(aLat*Math.PI/180)*Math.cos(bLat*Math.PI/180)*Math.sin(dLo/2)*Math.sin(dLo/2); return 2*R*Math.asin(Math.sqrt(h)); }
+/* Derive the expected new-build exit for a clicked property from the
+   page's own verified new-build sales (SALES with new_build set):
+   median price of the 5 nearest new-build sales within 3 miles
+   (same-area sales preferred). If fewer than 3 sit within 3 miles,
+   fall back to the median new-build price for the property's area
+   and label it as such. Never a static default. */
+function nearestPool(nb, p){
+ if(!(p.lat && p.lon)) return null;
+ var withDist=nb.map(function(s){ return {s:s, d:distMi(+p.lat,+p.lon,+s.lat,+s.lon)}; }).sort(function(a,b){return a.d-b.d});
+ var near=withDist.filter(function(x){ return x.d<=3; });
+ var sameAreaNear=near.filter(function(x){ return x.s.area===p.area; });
+ var pool=(sameAreaNear.length>=3? sameAreaNear : near).slice(0,5);
+ return pool.length>=3? pool : null;
+}
+function deriveExit(p){
+ var nb=(typeof SALES!=='undefined'?SALES:[]).filter(function(s){ return s.new_build && +s.price>0 && s.lat && s.lon; });
+ if(!nb.length) return null;
+ var pool=nearestPool(nb, p);
+ if(pool){
+  return { value: medianOf(pool.map(function(x){return +x.s.price})), fallback:false,
+   label:'median of the '+pool.length+' nearest verified new-build sales',
+   comps: pool.map(function(x){ return {address:x.s.address, price:+x.s.price, dist:x.d}; }) };
+ }
+ var areaNb=nb.filter(function(s){ return s.area===p.area; });
+ var use=areaNb.length? areaNb : nb;
+ return { value: medianOf(use.map(function(s){return +s.price})), fallback:true,
+  label:(areaNb.length? ('area-median fallback — median of all '+use.length+' verified new-build sales in '+p.area+' (fewer than 3 new-build sales within 3 miles of this property)') : ('overall-median fallback — median of all '+use.length+' verified new-build sales across the three areas')),
+  comps: [] };
+}
+
+/* ---------- Model v2: per-property planned size + build cost ----------
+   Mirrors pipeline/offer_screen.py. Planned size = min(zoning living
+   cap, market-demonstrated size). Zoning caps (living sq ft, garage
+   removed from the gross cap): Metro Nashville has NO floor-area cap —
+   cap = 2 stories × district lot coverage (Table 17.12.020A) − 550 sf
+   garage; Belle Meade (zoning 3ZZ, Ord. 2024-14) FAR 0.225 on lots
+   ≤40,000 sf / 0.20 above, GFA cap 20,000 incl. garages; Forest Hills
+   (5ZZ, Ord. 2024-03) district FARs 0.075–0.180, district not in county
+   data → 0.13 central, primary cap 25,000; Oak Hill (8ZZ) Zone C 0.18
+   FAR / 10,000 cap (single secondary source — weakest input).
+   Market size from the 20 assessor-confirmed new builds among the $2M+
+   sales: ≤25,000 sf lot → 5,350; 25,000–43,560 → 6,012; >43,560 → 5,200.
+   HPR two-unit play: Metro R districts only (never RS), lot ≥ 15,000 —
+   exit = 2 × per-side exit from HPR-side sales, planned 2 × 4,700.
+   Build cost: $350/sq ft satellite cities, $315 Metro (luxury band
+   $325–$425 from NAHB / Nashville builder guides / a Brentwood lender
+   package ≈$333 all-in), plus the demolition allowance in the form. */
+var METRO_COVERAGE={'RS40':0.25,'R40':0.25,'RS30':0.30,'RS20':0.35,'R20':0.35,'RS15':0.35,'R15':0.35,'RS10':0.40,'R10':0.40,'R8':0.45,'RS7.5':0.45,'R6':0.50,'RS5':0.50,'RS80':0.20};
+var BUILD_PSF_JUR={'Belle Meade':350,'Oak Hill':350,'Forest Hills':350,'Metro Nashville':315};
+var GARAGE_SF=550, HPR_UNIT_SF=4700;
+function jurisdictionOf(zoning){ var z=String(zoning||'').toUpperCase(); if(z==='3ZZ') return 'Belle Meade'; if(z==='5ZZ') return 'Forest Hills'; if(z==='8ZZ') return 'Oak Hill'; return 'Metro Nashville'; }
+function metroCoverage(zoning){ var c=METRO_COVERAGE[String(zoning||'').toUpperCase()]; return c===undefined?0.35:c; }
+function livingCap(p){
+ var lot=+p.lot_sqft||0, jur=jurisdictionOf(p.zoning);
+ if(jur==='Belle Meade'){ var far=lot<=40000?0.225:0.20; return Math.min(far*lot,20000)-GARAGE_SF; }
+ if(jur==='Forest Hills') return Math.min(0.13*lot,25000)-GARAGE_SF;
+ if(jur==='Oak Hill') return Math.min(0.18*lot,10000)-GARAGE_SF;
+ return 2*metroCoverage(p.zoning)*lot-GARAGE_SF;
+}
+function marketSizeSingle(lot){ return lot<=25000?5350:(lot<=43560?6012:5200); }
+function isHprEligible(p){
+ if(jurisdictionOf(p.zoning)!=='Metro Nashville') return false;
+ var z=String(p.zoning||'').toUpperCase();
+ return z.charAt(0)==='R' && z.indexOf('RS')!==0 && (+p.lot_sqft||0)>=15000;
+}
+function modelFor(p){
+ var jur=jurisdictionOf(p.zoning), psf=BUILD_PSF_JUR[jur], lot=+p.lot_sqft||0;
+ if(isHprEligible(p)){
+  var capTotal=2*metroCoverage(p.zoning)*lot-2*GARAGE_SF;
+  var plannedH=Math.max(Math.floor(Math.min(capTotal, 2*HPR_UNIT_SF)),1200);
+  return {jur:jur, units:2, planned:plannedH, psf:psf, cap:capTotal, market:2*HPR_UNIT_SF};
+ }
+ var cap=livingCap(p), mkt=marketSizeSingle(lot);
+ var planned=Math.max(Math.floor(Math.min(cap, mkt)),1200);
+ return {jur:jur, units:1, planned:planned, psf:psf, cap:cap, market:mkt};
+}
+function deriveExitHpr(p){
+ var nb=(typeof SALES!=='undefined'?SALES:[]).filter(function(s){ return s.new_build && +s.price>0 && s.lat && s.lon; });
+ var sides=nb.filter(function(s){ return /^\d+ [AB]\s/.test(String(s.address||'').toUpperCase()); });
+ var pool=nearestPool(sides, p);
+ if(pool){
+  var unitN=medianOf(pool.map(function(x){return +x.s.price}));
+  return { value:2*unitN, fallback:false,
+   label:'two-unit HPR exit — 2 × '+money(unitN)+' per side, the median of the '+pool.length+' nearest HPR-side sales',
+   comps: pool.map(function(x){ return {address:x.s.address, price:+x.s.price, dist:x.d}; }) };
+ }
+ if(sides.length){
+  var unitA=medianOf(sides.map(function(s){return +s.price}));
+  return { value:2*unitA, fallback:true,
+   label:'two-unit HPR exit — 2 × '+money(unitA)+' per side, the median of all '+sides.length+' HPR-side sales (fewer than 3 within 3 miles of this property)', comps:[] };
+ }
+ var se=deriveExit(p);
+ if(!se) return null;
+ var unitF=Math.round(0.65*se.value);
+ return { value:2*unitF, fallback:true, label:'two-unit HPR exit — 2 × '+money(unitF)+' per side (0.65 × the single-home exit; no HPR-side sales data)', comps:[] };
+}
+function propertyExit(p){
+ if(isHprEligible(p)) return deriveExitHpr(p);
+ return deriveExit(p);
+}
+function populateCalculators(p, fromClick){
+ if(p.year_built) document.getElementById('yr').value=p.year_built;
+ if(p.finished_sqft) document.getElementById('living').value=p.finished_sqft;
+ if(p.lot_sqft){ document.getElementById('lotsf').value=p.lot_sqft; document.getElementById('lotac').value=''; }
+ var hasSale=p.last_sale_price && +p.last_sale_price>0;
+ LOADED_PROP=p;
+ document.getElementById('refLand').value=money(p.land_appraisal);
+ document.getElementById('refTotal').value=money(p.total_appraisal);
+ var exitInfo=propertyExit(p);
+ if(exitInfo) document.getElementById('exit').value=exitInfo.value;
+ var mf=modelFor(p);
+ document.getElementById('nbSize').value=mf.planned;
+ document.getElementById('buildPsf').value=mf.psf;
+ checkScreen(); checkSpread();
+ var note=document.getElementById('calcLoaded');
+ if(note){
+  var exitTxt;
+  if(exitInfo){
+   exitTxt=' Expected new-build exit set to <strong>'+money(exitInfo.value)+'</strong> — '+esc(exitInfo.label)+'.';
+   if(exitInfo.comps.length){
+    exitTxt=' Expected new-build exit set to <strong>'+money(exitInfo.value)+'</strong> — '+esc(exitInfo.label)+': '+exitInfo.comps.map(function(c){ return esc(titleCase(c.address))+' '+money(c.price)+' ('+c.dist.toFixed(1)+' mi)'; }).join(' · ')+'.';
+   }
+  } else {
+   exitTxt=' Expected new-build exit left as-is — no verified new-build sales data loaded.';
+  }
+  var m=spreadModel();
+  var modelTxt=' Planned build for this property ('+esc(mf.jur)+', zoning '+esc(p.zoning)+'): '+(mf.units===2?'two-unit HPR — ':'')+'zoning allows '+num(Math.floor(mf.cap))+' sq ft of living area; builders demonstrably build '+num(mf.market)+' sq ft on lots like this; planned size set to the lesser, <strong>'+num(mf.planned)+' sq ft</strong>, at <strong>'+money(mf.psf)+'/sq ft</strong> ('+esc(mf.jur)+' tier) plus the '+money(m.demo)+' demolition allowance.';
+  var chainTxt=exitInfo? ' Contract price chain: exit '+money(m.exit)+' − build '+money(m.build)+' − soft costs '+money(m.soft)+' − builder profit '+money(m.profit)+' = builder max land price <strong>'+money(m.maxLand)+'</strong> − target assignment fee '+money(m.fee)+' = <strong>contract price '+money(m.contract)+'</strong>.':'';
+  note.innerHTML='<strong>Loaded into the calculators: '+esc(titleCase(p.address))+'</strong> ('+esc(p.area)+') — year built '+esc(p.year_built)+', living '+num(p.finished_sqft)+' sq ft, lot '+num(p.lot_sqft)+' sq ft into the coverage checker; land appraisal '+money(p.land_appraisal)+' · total appraisal '+money(p.total_appraisal)+' loaded as reference. Last sale '+(hasSale?money(p.last_sale_price)+' · '+esc(p.last_sale_date||''):'none recorded')+' — what the owner paid, reference only; it is NOT used as the contract price.'+exitTxt+modelTxt+chainTxt;
+  note.classList.add('show');
+ }
+ var sec=document.getElementById('calculators');
+ if(sec){
+  sec.classList.remove('calcflash'); void sec.offsetWidth; sec.classList.add('calcflash');
+  if(fromClick) sec.scrollIntoView({block:'start', behavior:'smooth'});
+ }
+}
+
+/* ---------- Maps + data ---------- */
+var CENTER={lat:36.098,lng:-86.845};
+function geojson(records, propsFn){
+ return {type:'FeatureCollection', features: records.filter(function(r){return r.lat&&r.lon}).map(function(r){ return {type:'Feature', geometry:{type:'Point', coordinates:[r.lon, r.lat]}, properties: propsFn(r)}; })};
+}
+function mapUnavailable(elId, msgId){
+ return function(){ var el=document.getElementById(elId); if(el){ el.innerHTML='<div class="mapfallback">Map unavailable in this view — the full data is in the '+(msgId?'table and detail cards':'detail cards')+' on this page.</div>'; } };
+}
+
+var STACKED=[], PERMITS=[], SALES=[];
+var SIGDEF=[
+ ['sig_absentee_owner','Absentee owner'],
+ ['sig_code_violations','Code violations'],
+ ['sig_vacant_codes','Vacant (codes)'],
+ ['sig_probate_estate','Probate / estate'],
+ ['sig_probate_death','Probate — deceased owner (obituary)'],
+ ['sig_hpr_size_proxy','HPR-size proxy']
+];
+function sigNames(p){ var out=[]; SIGDEF.forEach(function(d){ if(p[d[0]]==='Y') out.push(d[1]); }); return out; }
+
+/* Offer-acceptance screen, live: the contract price the spread model
+   produces for this property — modeled exit from propertyExit (two-unit
+   HPR exit where the lot qualifies), build cost from THIS property's
+   model-v2 planned size and jurisdiction $/sq ft plus the demolition
+   allowance, at the calculator's current soft/profit/fee settings —
+   must be (a) more than what the owner last paid and (b) at least 90%
+   of the county total appraisal (land + improvement). No recorded
+   sale -> test (b) only. This is the screen that removed 2,525
+   properties from the list. */
+function offerScreen(p){
+ var ei=propertyExit(p); if(!ei) return null;
+ var mf=modelFor(p);
+ var demo=+document.getElementById('demoCost').value||0;
+ var softPct=+document.getElementById('softPct').value||0, profitPct=+document.getElementById('profitPct').value||0, fee=+document.getElementById('fee').value||0;
+ var build=Math.round(mf.planned*mf.psf)+demo, soft=Math.round(ei.value*softPct/100), profit=Math.round(ei.value*profitPct/100);
+ var contract=ei.value-build-soft-profit-fee;
+ var total=+p.total_appraisal||0, thr=Math.round(total*0.9);
+ var hasSale=!!(p.last_sale_price && +p.last_sale_price>0);
+ var passSale=!hasSale || contract>+p.last_sale_price;
+ var passAppr=total>0 ? contract>=thr : true;
+ return {exit:ei.value, contract:contract, thr:thr, hasSale:hasSale, passSale:passSale, passAppr:passAppr, pass:passSale&&passAppr, planned:mf.planned, psf:mf.psf, units:mf.units, jur:mf.jur};
+}
+function showStacked(p, fromClick){
+ var el=document.getElementById('allDetail');
+ var sigs=sigNames(p).map(function(s){return '<span class="chip">'+esc(s)+'</span>'}).join('');
+ var obit = p.obituary_death_evidence ? '<span class="chip" style="background:#fde8e8;color:#7a1d1d;border-color:#e8a0a0">Probate — deceased owner confirmed</span>' : '<span class="chip check">Obituary — check pending</span>';
+ var checks='<span class="chip check">Tax delinquent — per-property check</span><span class="chip check">Pre-foreclosure — per-property check</span><span class="chip check">Tax increase — per-property check</span>'+obit;
+ var os=offerScreen(p);
+ var osRows=os? '<div class="drow"><span>Offer screen — modeled exit</span><b>'+money(os.exit)+'</b></div>'
+ +'<div class="drow"><span>Modeled build (per-property)</span><b>'+(os.units===2?'Two-unit HPR · ':'')+num(os.planned)+' sq ft × '+money(os.psf)+'/sq ft · '+esc(os.jur)+'</b></div>'
+ +'<div class="drow"><span>Offer screen — contract price</span><b>'+money(os.contract)+'</b></div>'
+ +'<div class="drow"><span>Offer screen — 90% of total appraisal</span><b>'+money(os.thr)+'</b></div>'
+ +'<div class="drow"><span>Offer-acceptance screen</span><b>'+(os.pass?'✓ Passes both tests at current calculator settings':'✗ Fails at current calculator settings — '+(os.passSale?'':'contract not above last sale price ')+(os.passAppr?'':'below 90% of total appraisal'))+'</b></div>' : '';
+ el.innerHTML='<h3>'+esc(titleCase(p.address))+'</h3><div class="addr-sub">'+esc(p.area)+' · APN '+esc(p.apn)+' · '+p.signal_count+' signal'+(p.signal_count===1?'':'s')+'</div>'
+ +'<div class="sigchips">'+sigs+checks+'</div>'
+ +(p.obituary_death_evidence?'<p class="hint" style="margin:2px 0 8px">'+esc(p.obituary_death_evidence)+'</p>':'')
+ +'<div class="drow"><span>Owner of record</span><b>'+esc(titleCase(p.owner))+'</b></div>'
+ +'<div class="drow"><span>Owner mailing</span><b>'+esc(titleCase(p.owner_mailing))+'</b></div>'
+ +'<div class="drow"><span>Year built</span><b>'+esc(p.year_built)+'</b></div>'
+ +'<div class="drow"><span>Finished area</span><b>'+num(p.finished_sqft)+' sq ft</b></div>'
+ +'<div class="drow"><span>Lot</span><b>'+num(p.lot_sqft)+' sq ft · '+esc(p.lot_acres)+' ac</b></div>'
+ +'<div class="drow"><span>Coverage ratio</span><b>'+(p.coverage_ratio!=null?(p.coverage_ratio*100).toFixed(1)+'%':'—')+' of lot</b></div>'
+ +'<div class="drow"><span>Zoning</span><b>'+esc(p.zoning)+'</b></div>'
+ +'<div class="drow"><span>Land appraisal</span><b>'+money(p.land_appraisal)+'</b></div>'
+ +'<div class="drow"><span>Improvement appraisal</span><b>'+money(p.impr_appraisal)+'</b></div>'
+ +'<div class="drow"><span>Total appraisal</span><b>'+money(p.total_appraisal)+'</b></div>'
+ +'<div class="drow"><span>Land share of value</span><b>'+esc(p.land_share_pct)+'%</b></div>'
+ +'<div class="drow"><span>Last sale</span><b>'+(p.last_sale_price?money(p.last_sale_price)+' · ':'')+esc(p.last_sale_date||'—')+'</b></div>'
+ +osRows
+ +'<div class="drow"><span>Owner since</span><b>'+esc(p.owner_since||'—')+' ('+esc(p.tenure_years)+' yrs tenure)</b></div>'
+ +'<div class="drow"><span>Code violations</span><b>'+esc(p.violation_count)+(p.last_violation?' · last '+esc(p.last_violation):'')+'</b></div>'
+ +'<p class="hint" style="margin-top:10px">Source: Davidson County assessor + Metro Codes records, pulled Oct 28, 2026. Tax-delinquent, pre-foreclosure, and tax-increase status are not in any bulk county feed — verify per property before outreach (Clerk &amp; Master list, Nashville Ledger, assessor record card).</p>';
+ populateCalculators(p, !!fromClick);
+}
+function showPermit(p){
+ var el=document.getElementById('allDetail');
+ el.innerHTML='<h3>'+esc(titleCase(p.address))+'</h3><div class="addr-sub">'+esc(p.area)+' · APN '+esc(p.apn)+'</div>'
+ +'<div class="drow"><span>Kind</span><b>'+(p.kind==='demolition'?'Demolition':'New construction')+'</b></div>'
+ +'<div class="drow"><span>Permit type</span><b>'+esc(p.type)+'</b></div>'
+ +'<div class="drow"><span>Subtype</span><b>'+esc(p.subtype)+'</b></div>'
+ +'<div class="drow"><span>Issued</span><b>'+esc(p.issued)+'</b></div>'
+ +'<div class="drow"><span>Stated construction cost</span><b>'+money(p.cost)+'</b></div>'
+ +'<div class="drow"><span>Applicant / builder</span><b>'+esc(titleCase(p.contact))+'</b></div>'
+ +'<p class="hint" style="margin-top:10px">Source: Metro Nashville issued building permits, Oct 28, 2025 – Oct 28, 2026.</p>';
+}
+function saleCardHTML(p){
+ return '<h3>'+esc(titleCase(p.address))+'</h3><div class="addr-sub">'+esc(p.area)+' · '+(p.new_build?'Verified new build':'Existing-home sale')+'</div>'
+ +'<div class="drow"><span>Sale price</span><b>'+money(p.price)+'</b></div>'
+ +'<div class="drow"><span>Sale date</span><b>'+esc(p.sale_date)+'</b></div>'
+ +'<div class="drow"><span>Buyer (owner of record)</span><b>'+esc(titleCase(p.buyer_owner))+'</b></div>'
+ +'<div class="drow"><span>Year built</span><b>'+esc(p.year_built||'—')+'</b></div>'
+ +'<div class="drow"><span>Lot</span><b>'+esc(p.lot_acres)+' ac</b></div>'
+ +'<div class="drow"><span>Total appraisal</span><b>'+money(p.total_appraisal)+'</b></div>'
+ +(p.new_build?'<div class="drow"><span>New-build basis</span><b>'+(p.new_build_basis==='permit'?'New-construction permit since 2021':'Assessor year built ≥ 2023')+'</b></div>':'')
+ +(p.builder_from_permits?'<div class="drow"><span>Builder (from permits)</span><b>'+esc(titleCase(p.builder_from_permits))+'</b></div>':'')
+ +'<p class="hint" style="margin-top:10px">Source: Davidson County assessor deed records, Oct 28, 2025 – Oct 28, 2026.</p>';
+}
+function showSale(p){ document.getElementById('allDetail').innerHTML=saleCardHTML(p); }
+function showSaleNB(p){
+ var el=document.getElementById('nbDetail');
+ el.innerHTML=saleCardHTML(p);
+ el.scrollIntoView({block:'nearest', behavior:'smooth'});
+}
+
+/* New-build $2M+ table (subset of SALES) */
+function renderNBTable(){
+ var area=document.getElementById('nbArea').value, sort=document.getElementById('nbSort').value;
+ var q=(document.getElementById('nbSearch').value||'').toLowerCase();
+ var rows=SALES.filter(function(p){ return p.new_build && p.price>=2000000 && (!area||p.area===area) && (!q || (p.builder_from_permits||'').toLowerCase().indexOf(q)>-1 || (p.address||'').toLowerCase().indexOf(q)>-1); });
+ if(sort==='high') rows.sort(function(a,b){return b.price-a.price});
+ else if(sort==='low') rows.sort(function(a,b){return a.price-b.price});
+ else rows.sort(function(a,b){return String(b.sale_date).localeCompare(String(a.sale_date))});
+ var tb=document.querySelector('#nbTable tbody'); tb.innerHTML='';
+ rows.forEach(function(p){
+  var tr=document.createElement('tr');
+  tr.innerHTML='<td data-l="Date">'+esc(p.sale_date)+'</td>'
+  +'<td data-l="Address"><b>'+esc(titleCase(p.address))+'</b></td>'
+  +'<td data-l="Area">'+esc(p.area.replace(' (372','\n(372'))+'</td>'
+  +'<td data-l="Price"><b>'+money(p.price)+'</b></td>'
+  +'<td data-l="Buyer">'+esc(titleCase(p.buyer_owner))+'</td>'
+  +'<td data-l="Builder">'+(p.builder_from_permits?esc(titleCase(p.builder_from_permits)):'—')+'</td>'
+  +'<td data-l="Verified by">'+(p.new_build_basis==='permit'?'New-construction permit since 2021':'Assessor year built ≥ 2023')+'</td>'
+  +'<td data-l="Lot">'+esc(p.lot_acres)+' ac</td>';
+  tr.onclick=function(){ showSaleNB(p); };
+  tb.appendChild(tr);
+ });
+ document.getElementById('nbNote').textContent='Showing '+rows.length+' of 85 verified new-build sales at $2M+ (Oct 28, 2025 – Oct 28, 2026). Click a row for the full sale record.';
+}
+document.getElementById('nbArea').addEventListener('change', renderNBTable);
+document.getElementById('nbSort').addEventListener('change', renderNBTable);
+document.getElementById('nbSearch').addEventListener('input', renderNBTable);
+
+/* New-build price-band chart */
+(function(){
+ var BANDS=[['$2M – $3M',30],['$3M – $4M',22],['$4M – $5M',13],['$5M+',20]];
+ var bc=document.getElementById('nbbands');
+ BANDS.forEach(function(r){ var pct=Math.round(r[1]/30*100); var row=document.createElement('div'); row.className='bar-row';
+  row.innerHTML='<span>'+r[0]+'</span><div class="bar"><i style="width:'+Math.max(pct,2)+'%"></i></div><b>'+r[1]+' sales</b>'; bc.appendChild(row); });
+})();
+
+function renderStackedTable(){
+ var area=document.getElementById('fArea').value, minS=+document.getElementById('fSig').value;
+ var rows=STACKED.filter(function(p){ return (!area||p.area===area) && p.signal_count>=minS; });
+ var tb=document.querySelector('#stackedTable tbody'); tb.innerHTML='';
+ rows.slice(0,75).forEach(function(p,i){
+  var tr=document.createElement('tr');
+  tr.innerHTML='<td data-l="#">'+(i+1)+'</td><td data-l="Signals"><span class="sigcount sc'+p.signal_count+'">'+p.signal_count+'</span></td>'
+  +'<td data-l="Address"><b>'+esc(titleCase(p.address))+'</b><br><span style="color:var(--muted);font-size:12px">'+esc(sigNames(p).join(' · '))+'</span></td>'
+  +'<td data-l="Area">'+esc(p.area.replace(' (372','\n(372'))+'</td>'
+  +'<td data-l="Owner">'+esc(titleCase(p.owner))+'</td>'
+  +'<td data-l="Built">'+esc(p.year_built)+'</td>'
+  +'<td data-l="Coverage">'+(p.coverage_ratio!=null?(p.coverage_ratio*100).toFixed(1)+'%':'—')+'</td>'
+  +'<td data-l="Land appraisal">'+money(p.land_appraisal)+'</td>'
+  +'<td data-l="Last sale">'+(p.last_sale_price?money(p.last_sale_price):'—')+'</td>';
+  tr.onclick=function(){ showStacked(p, true); };
+  tb.appendChild(tr);
+ });
+ document.getElementById('tableNote').textContent='Showing '+(Math.min(rows.length,75))+' of '+rows.length.toLocaleString()+' pinned properties matching this filter (the map pins all '+STACKED.length.toLocaleString()+'). Sorted by signal count, then land appraisal — your ranking rule. Click a row for the full record card.';
+}
+document.getElementById('fArea').addEventListener('change', renderStackedTable);
+document.getElementById('fSig').addEventListener('change', renderStackedTable);
+
+function loadJSON(url){ return fetch(url).then(function(r){ if(!r.ok) throw new Error(r.status); return r.json(); }); }
+
+Promise.all([loadJSON('assets/stacked.json'), loadJSON('assets/permits.json'), loadJSON('assets/sales.json')]).then(function(all){
+ STACKED=all[0]; PERMITS=all[1]; SALES=all[2];
+ STACKED.sort(function(a,b){ return b.signal_count-a.signal_count || b.land_appraisal-a.land_appraisal; });
+ document.getElementById('stackedMsg').textContent='Loaded '+STACKED.length.toLocaleString()+' pinned properties from the county pull of Oct 28, 2026.';
+ renderStackedTable();
+ if(STACKED.length) showStacked(STACKED[0]);
+ renderNBTable();
+ var nbRecent=SALES.filter(function(p){return p.new_build}).sort(function(a,b){return String(b.sale_date).localeCompare(String(a.sale_date))})[0];
+ if(nbRecent) document.getElementById('nbDetail').innerHTML=saleCardHTML(nbRecent);
+
+ /* One merged map — fully self-contained, no external map hosts.
+    The basemap is baked into the page at build time: OpenStreetMap
+    tiles at zoom 14 stitched into a single image (assets/basemap.jpg,
+    2304×2048 px, covering the three areas) and served from the page's
+    own assets. Pins are plain positioned elements over that image,
+    placed with the standard Web-Mercator projection; pan and zoom are
+    a CSS transform on the shared map layer, in vanilla JS. No map
+    library, tile server, or CDN is contacted at runtime — the two
+    earlier stacks (a bundled vector basemap, then Leaflet + live OSM
+    tiles) both failed in the real published frame, so this map depends
+    on nothing outside the artifact. */
+ var NB_SALES=SALES.filter(function(p){ return p.new_build; });
+ var layerState={ stacked:true, permits:true, sales:true };
+ var BM={ scale:256*Math.pow(2,14), ox:1084160, oy:1644544, w:2304, h:2048 };
+ function projX(lon){ return (lon+180)/360*BM.scale-BM.ox; }
+ function projY(lat){ var r=lat*Math.PI/180; return (1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*BM.scale-BM.oy; }
+ function stackedTip(p){ return '<b>'+esc(titleCase(p.address))+'</b><br>'+p.signal_count+' signals ('+esc(sigNames(p).join(', '))+')<br>Owner: '+esc(titleCase(p.owner))+' · Built '+esc(p.year_built)+'<br>Coverage '+((p.coverage_ratio||0)*100).toFixed(1)+'% · Land '+money(p.land_appraisal)+' · Total '+money(p.total_appraisal)+'<br>Last sale '+(p.last_sale_price?money(p.last_sale_price):'n/a')+' '+esc(p.last_sale_date||''); }
+ function permitTip(p){ return '<b>'+esc(titleCase(p.address))+'</b><br>'+(p.kind==='demolition'?'Demolition':'New construction')+' · '+esc(p.type)+'<br>Issued '+esc(p.issued)+' · Cost '+money(p.cost)+'<br>Applicant: '+esc(titleCase(p.contact)); }
+ function saleTip(p){ return '<b>'+esc(titleCase(p.address))+'</b><br>'+money(p.price)+' · Sold '+esc(p.sale_date)+'<br>Verified new build · Buyer: '+esc(titleCase(p.buyer_owner))+(p.builder_from_permits?'<br>Builder: '+esc(titleCase(p.builder_from_permits)):''); }
+ function stackedColor(n){ return n>=4?'#1d4a2a':(n===3?'#2e6b3e':(n===2?'#4c8a5a':'#7fb069')); }
+ function stackedSize(n){ return n>=4?15:(n===3?13:(n===2?11:9)); }
+ function saleSize(price){ price=+price||0; return price>=10000000?17:(price>=6000000?14:(price>=3000000?12:10)); }
+ (function mountMerged(){
+  var el=document.getElementById('mapAll');
+  if(!el) return;
+  el.innerHTML='';
+  var stage=document.createElement('div');
+  stage.className='mapstage';
+  stage.style.width=BM.w+'px'; stage.style.height=BM.h+'px';
+  var img=document.createElement('img');
+  img.src='assets/basemap.jpg'; img.width=BM.w; img.height=BM.h;
+  img.alt='Street map of Green Hills, Belle Meade / West Meade, and Oak Hill in Nashville';
+  img.draggable=false;
+  img.onerror=function(){ var d=document.createElement('div'); d.className='mapfallback'; d.textContent='The basemap image could not be loaded in this view — the pins, tables, and detail cards on this page still carry the full data.'; el.appendChild(d); };
+  stage.appendChild(img);
+  function makeGroup(){ var g=document.createElement('div'); g.className='maplayer'; stage.appendChild(g); return g; }
+  var gSales=makeGroup(), gPermits=makeGroup(), gStacked=makeGroup();
+  var groups={ stacked:gStacked, permits:gPermits, sales:gSales };
+  function makePin(group, x, y, size, fill, border, tip, onClick){
+   var d=document.createElement('div');
+   d.className='pin';
+   d.style.left=x+'px'; d.style.top=y+'px';
+   d.style.width='calc('+size+'px * var(--ik,1))'; d.style.height='calc('+size+'px * var(--ik,1))';
+   d.style.background=fill; d.style.border='calc(1.5px * var(--ik,1)) solid '+border;
+   d._tip=tip; d._click=onClick;
+   group.appendChild(d);
+  }
+  NB_SALES.forEach(function(p){ if(!p.lat||!p.lon) return; makePin(gSales, projX(p.lon), projY(p.lat), saleSize(p.price), '#d9a400', '#6b4e00', saleTip(p), function(){ showSale(p); }); });
+  PERMITS.forEach(function(p){ if(!p.lat||!p.lon) return; makePin(gPermits, projX(p.lon), projY(p.lat), 9, (p.kind==='demolition'?'#1e5aa8':'#5b9bd5'), '#ffffff', permitTip(p), function(){ showPermit(p); }); });
+  STACKED.forEach(function(p){ if(!p.lat||!p.lon) return; makePin(gStacked, projX(p.lon), projY(p.lat), stackedSize(p.signal_count), stackedColor(p.signal_count), '#ffffff', stackedTip(p), function(){ showStacked(p, true); }); });
+  el.appendChild(stage);
+  var tip=document.createElement('div'); tip.className='mtip'; el.appendChild(tip);
+  var ctrls=document.createElement('div'); ctrls.className='mapctrls';
+  ctrls.innerHTML='<button type="button" class="mapbtn" id="mzIn" aria-label="Zoom in">+</button><button type="button" class="mapbtn" id="mzOut" aria-label="Zoom out">−</button><button type="button" class="mapbtn fit" id="mzFit">Fit</button>';
+  el.appendChild(ctrls);
+  var attr=document.createElement('div'); attr.className='mapattr'; attr.textContent='Basemap © OpenStreetMap contributors — image baked into this page'; el.appendChild(attr);
+  /* View state: CSS transform on the stage (translate + scale). Pins
+     counter-scale via the --ik custom property so they stay a constant
+     on-screen size at every zoom. */
+  var view={k:0.3, tx:0, ty:0}, kFit=0.3;
+  function clampView(){
+   var r=el.getBoundingClientRect(), w=BM.w*view.k, h=BM.h*view.k, m=60;
+   view.tx=(w<=r.width)?(r.width-w)/2:Math.min(m, Math.max(r.width-w-m, view.tx));
+   view.ty=(h<=r.height)?(r.height-h)/2:Math.min(m, Math.max(r.height-h-m, view.ty));
+  }
+  function applyView(){
+   stage.style.transform='translate('+view.tx+'px,'+view.ty+'px) scale('+view.k+')';
+   stage.style.setProperty('--ik', String(1/view.k));
+  }
+  function fitView(){
+   var r=el.getBoundingClientRect();
+   view.k=Math.min(r.width/1750, r.height/1480); kFit=view.k;
+   view.tx=r.width/2-1175*view.k; view.ty=r.height/2-1110*view.k;
+   clampView(); applyView();
+  }
+  function zoomAt(cx, cy, factor){
+   var k2=Math.min(2.75, Math.max(kFit*0.85, view.k*factor));
+   var s=k2/view.k;
+   view.tx=cx-(cx-view.tx)*s; view.ty=cy-(cy-view.ty)*s; view.k=k2;
+   clampView(); applyView();
+  }
+  fitView();
+  window.addEventListener('resize', function(){ clampView(); applyView(); });
+  document.getElementById('mzIn').addEventListener('click', function(){ var r=el.getBoundingClientRect(); zoomAt(r.width/2, r.height/2, 1.35); });
+  document.getElementById('mzOut').addEventListener('click', function(){ var r=el.getBoundingClientRect(); zoomAt(r.width/2, r.height/2, 1/1.35); });
+  document.getElementById('mzFit').addEventListener('click', fitView);
+  el.addEventListener('wheel', function(e){ e.preventDefault(); var r=el.getBoundingClientRect(); zoomAt(e.clientX-r.left, e.clientY-r.top, e.deltaY<0?1.15:1/1.15); }, {passive:false});
+  el.addEventListener('dblclick', function(e){ var r=el.getBoundingClientRect(); zoomAt(e.clientX-r.left, e.clientY-r.top, 1.5); });
+  /* Drag-pan and pinch-zoom via pointer events on the window, so a drag
+     that leaves the map box still tracks. dragDist distinguishes a pin
+     click from a pan that happened to start on a pin. */
+  var pointers=new Map(), dragDist=0, lastDragEnd=0, pinchD=0;
+  function hideTip(){ tip.style.display='none'; }
+  el.addEventListener('pointerdown', function(e){
+   pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
+   dragDist=0;
+   if(pointers.size===2){ var ps=Array.from(pointers.values()); pinchD=Math.hypot(ps[0].x-ps[1].x, ps[0].y-ps[1].y); }
+   el.classList.add('grabbing'); hideTip();
+  });
+  window.addEventListener('pointermove', function(e){
+   if(!pointers.has(e.pointerId)) return;
+   var prev=pointers.get(e.pointerId), dx=e.clientX-prev.x, dy=e.clientY-prev.y;
+   pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
+   if(pointers.size===1){ dragDist+=Math.abs(dx)+Math.abs(dy); view.tx+=dx; view.ty+=dy; clampView(); applyView(); }
+   else if(pointers.size===2){
+    var ps=Array.from(pointers.values());
+    var d=Math.hypot(ps[0].x-ps[1].x, ps[0].y-ps[1].y);
+    var r=el.getBoundingClientRect();
+    if(pinchD>0) zoomAt((ps[0].x+ps[1].x)/2-r.left, (ps[0].y+ps[1].y)/2-r.top, d/pinchD);
+    pinchD=d; dragDist=99;
+   }
+  });
+  function endPointer(e){
+   if(pointers.delete(e.pointerId) && dragDist>6) lastDragEnd=Date.now();
+   if(pointers.size<2) pinchD=0;
+   if(pointers.size===0) el.classList.remove('grabbing');
+  }
+  window.addEventListener('pointerup', endPointer);
+  window.addEventListener('pointercancel', endPointer);
+  /* Hover tooltip + click, delegated to the stage. */
+  stage.addEventListener('mousemove', function(e){
+   var t=e.target;
+   if(t.classList && t.classList.contains('pin')){
+    tip.innerHTML=t._tip; tip.style.display='block';
+    var r=el.getBoundingClientRect();
+    tip.style.left=Math.max(4, Math.min(e.clientX-r.left+14, r.width-312))+'px';
+    tip.style.top=Math.max(4, Math.min(e.clientY-r.top+14, r.height-140))+'px';
+   } else hideTip();
+  });
+  stage.addEventListener('mouseleave', hideTip);
+  stage.addEventListener('click', function(e){
+   var t=e.target;
+   if(t.classList && t.classList.contains('pin')){
+    if(Date.now()-lastDragEnd<200) return;
+    hideTip(); t._click();
+   }
+  });
+  /* Layer toggles under the map. */
+  function bindToggle(id, key){
+   var b=document.getElementById(id);
+   if(!b) return;
+   b.addEventListener('click', function(){
+    layerState[key]=!layerState[key];
+    b.setAttribute('aria-pressed', layerState[key]?'true':'false');
+    groups[key].style.display=layerState[key]?'':'none';
+   });
+  }
+  bindToggle('layerStacked','stacked');
+  bindToggle('layerPermits','permits');
+  bindToggle('layerSales','sales');
+ })();
+}).catch(function(err){
+ document.getElementById('stackedMsg').textContent='The county data files could not be loaded in this view ('+err.message+'). The area totals and signal counts above come from the same Oct 28, 2026 pull.';
+ document.getElementById('nbNote').textContent='The sales data file could not be loaded in this view ('+err.message+'). The new-build totals, medians, and price bands above come from the same Oct 28, 2026 pull of assessor deed records.';
+ mapUnavailable('mapAll', true)();
+});
+</script>
+</body>
+</html>
